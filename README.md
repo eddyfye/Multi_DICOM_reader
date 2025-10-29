@@ -8,7 +8,17 @@ distributed as a standalone executable.
 ## Requirements
 
 - Python 3.9 or later
-- [pydicom](https://pydicom.github.io/pydicom/stable/)
+- The Python packages listed in [`requirements.txt`](requirements.txt)
+
+Install the dependencies into your active Python environment with:
+
+```
+./install_dependencies.sh
+```
+
+The script downloads the required wheels into `local_packages/` and installs
+from that cache. Override the behaviour by setting `DOWNLOAD_DIR`,
+`REQUIREMENTS_FILE`, or `PYTHON_BIN` environment variables as needed.
 
 ## Usage
 
@@ -33,13 +43,17 @@ The CSV file includes the following columns:
 
 ## Bundling with PyInstaller
 
-To build a single-file executable using PyInstaller:
+Use the provided helper script to create a standalone executable and a matching
+PyInstaller spec file:
 
 ```
-pyinstaller --onefile dicom_metadata_extractor.py
+./build_executable.sh
 ```
 
-The resulting executable will accept the same arguments as the Python script.
+This produces a one-file executable in the `dist/` directory and places the
+generated spec file in `pyinstaller/`. Adjust the `APP_NAME`, `SPEC_DIR`,
+`DIST_DIR`, or `BUILD_DIR` environment variables when invoking the script if you
+need to customise where the build artefacts are written.
 
 ## License
 
