@@ -23,7 +23,7 @@ from that cache. Override the behaviour by setting `DOWNLOAD_DIR`,
 ## Usage
 
 ```
-python dicom_metadata_extractor.py <input_dir> <output_dir> [--output-name OUTPUT_NAME]
+python dicom_metadata_extractor.py [--input_dir INPUT_DIR --output_dir OUTPUT_DIR --output-name OUTPUT_NAME]
 ```
 
 - `--input_dir`: Directory containing one or more DICOM files (searched
