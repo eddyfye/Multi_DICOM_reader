@@ -13,7 +13,7 @@ distributed as a standalone executable.
 Install the dependencies into your active Python environment with:
 
 ```
-./install_dependencies.sh
+python install_dependencies.py
 ```
 
 The script downloads the required wheels into `local_packages/` and installs
@@ -47,7 +47,7 @@ Use the provided helper script to create a standalone executable and a matching
 PyInstaller spec file:
 
 ```
-./build_executable.sh
+python build_executable.py
 ```
 
 This produces a one-file executable in the `dist/` directory and places the
