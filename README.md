@@ -26,9 +26,9 @@ from that cache. Override the behaviour by setting `DOWNLOAD_DIR`,
 python dicom_metadata_extractor.py <input_dir> <output_dir> [--output-name OUTPUT_NAME]
 ```
 
-- `input_dir`: Directory containing one or more DICOM files (searched
+- `--input_dir`: Directory containing one or more DICOM files (searched
   recursively).
-- `output_dir`: Directory where the resulting CSV file will be created. The
+- `--output_dir`: Directory where the resulting CSV file will be created. The
   directory is created if it does not already exist.
 - `--output-name`: Optional name for the CSV file (defaults to
   `dicom_metadata.csv`).

@@ -48,12 +48,12 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         description="Extract key metadata from DICOM files and save as CSV."
     )
     parser.add_argument(
-        "input_dir",
+        "--input_dir",
         type=Path,
         help="Directory containing DICOM files to process.",
     )
     parser.add_argument(
-        "output_dir",
+        "--output_dir",
         type=Path,
         help="Directory where the CSV file will be written.",
     )
