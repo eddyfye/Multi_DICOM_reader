@@ -29,7 +29,7 @@ def run_pyinstaller(
             "PyInstaller",
             "--name",
             app_name,
-            "--onefile",
+            "--onedir",
             str(script_path),
             "--distpath",
             str(dist_dir),
