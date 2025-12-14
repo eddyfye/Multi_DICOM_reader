@@ -1,0 +1,43 @@
+{
+  "paths": {
+    "raw_images_dir": "data/raw/images",
+    "raw_sr_dir": "data/raw/sr",
+    "processed_dir": "data/processed",
+    "manifest_filename": "manifest.csv"
+  },
+  "data": {
+    "manifest_path": "data/processed/manifest.csv",
+    "cache_images": true,
+    "num_workers": 4,
+    "train_val_test_split": [0.7, 0.15, 0.15]
+  },
+  "labels": {
+    "type": "binary_malignancy",
+    "sr_field_codes": ["TODO_FILL_ME"]
+  },
+  "model": {
+    "name": "simple_3d_cnn",
+    "in_channels": 1,
+    "num_classes": 1,
+    "features": [32, 64, 128],
+    "dropout": 0.1
+  },
+  "training": {
+    "batch_size": 2,
+    "max_epochs": 100,
+    "learning_rate": 0.0001,
+    "optimizer": "adamw",
+    "weight_decay": 0.0001,
+    "precision": "16-mixed",
+    "gradient_clip_val": 1.0
+  },
+  "trainer": {
+    "accelerator": "auto",
+    "devices": "auto",
+    "log_every_n_steps": 10
+  },
+  "output": {
+    "save_dir": "outputs/baseline",
+    "checkpoint_monitor": "val_loss"
+  }
+}
