@@ -4,8 +4,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from . import build_manifest, train
-from .config import load_config
+from breast_diag_project.src import build_manifest, train
+from breast_diag_project.src.config import load_config
 
 
 def run_experiment(config_path: str, build_manifest_flag: bool = False) -> None:
