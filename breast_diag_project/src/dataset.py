@@ -10,8 +10,8 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 import pytorch_lightning as pl
 
-from . import dicom_io, sr_parser
-from .config import ExperimentConfig
+from breast_diag_project.src import dicom_io, sr_parser
+from breast_diag_project.src.config import ExperimentConfig
 
 
 class BreastDiagnosisDataset(Dataset):

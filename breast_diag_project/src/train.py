@@ -7,9 +7,9 @@ from pathlib import Path
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 
-from .config import ExperimentConfig, load_config
-from .dataset import BreastDiagnosisDataModule
-from .models import create_model
+from breast_diag_project.src.config import ExperimentConfig, load_config
+from breast_diag_project.src.dataset import BreastDiagnosisDataModule
+from breast_diag_project.src.models import create_model
 
 
 def run_training(config: ExperimentConfig) -> None:
