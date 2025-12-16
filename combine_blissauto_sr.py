@@ -1,6 +1,8 @@
 from pathlib import Path
 import shutil
 
+from tqdm import tqdm
+
 
 # ================== CONFIG ==================
 # Root of IMAGE tree (stop at the BREAST-DIAGNOSIS folder)
@@ -93,10 +95,9 @@ def find_blissauto(img_root: str):
     mapping = {}
     root = Path(img_root)
 
-    for patient_dir in root.iterdir():
-        if not patient_dir.is_dir():
-            continue
+    patient_dirs = [d for d in root.iterdir() if d.is_dir()]
 
+    for patient_dir in tqdm(patient_dirs, desc="Scanning IMG patients"):
         for study_dir in patient_dir.iterdir():
             if not study_dir.is_dir():
                 continue
@@ -120,10 +121,9 @@ def find_sr(sr_root: str):
     mapping = {}
     root = Path(sr_root)
 
-    for patient_dir in root.iterdir():
-        if not patient_dir.is_dir():
-            continue
+    patient_dirs = [d for d in root.iterdir() if d.is_dir()]
 
+    for patient_dir in tqdm(patient_dirs, desc="Scanning SR patients"):
         for study_dir in patient_dir.iterdir():
             if not study_dir.is_dir():
                 continue
