@@ -42,15 +42,16 @@
     "base_channels": 32,
     "dropout": 0.1
   },
-  "training": {
-    "batch_size": 2,
-    "max_epochs": 100,
-    "learning_rate": 0.0001,
-    "optimizer": "adamw",
-    "weight_decay": 0.0001,
-    "precision": "16-mixed",
-    "gradient_clip_val": 1.0
-  },
+    "training": {
+      "batch_size": 2,
+      "max_epochs": 100,
+      "learning_rate": 0.0001,
+      "optimizer": "adamw",
+      "weight_decay": 0.0001,
+      "precision": "16-mixed",
+      "gradient_clip_val": 1.0,
+      "matmul_precision": "medium"
+    },
   "trainer": {
     "accelerator": "auto",
     "devices": "auto",
