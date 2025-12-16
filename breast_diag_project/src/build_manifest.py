@@ -10,11 +10,15 @@ import argparse
 import json
 import logging
 import os
+import re
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, Iterable, List, Tuple
 
+import numpy as np
 import pandas as pd
 import pydicom
+import torch
+from pydicom import dcmread
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
@@ -52,13 +56,13 @@ def _collect_image_metadata(images_root: str) -> Dict[Tuple[str, str], List[Imag
     return images_map
 
 
-def _collect_sr_metadata(sr_root: str) -> Dict[str, Tuple[str, str]]:
+def _collect_sr_metadata(sr_root: str) -> Dict[Tuple[str, str], Tuple[str, str]]:
     """Collect metadata for DICOM-SR files.
 
-    Returns mapping from study_uid to (patient_id, sr_path).
+    Returns mapping from (patient_id, study_uid) to (patient_id, sr_path).
     """
 
-    sr_map: Dict[str, Tuple[str, str]] = {}
+    sr_map: Dict[Tuple[str, str], Tuple[str, str]] = {}
     for root, _, files in os.walk(sr_root):
         for fname in files:
             fpath = os.path.join(root, fname)
@@ -68,12 +72,12 @@ def _collect_sr_metadata(sr_root: str) -> Dict[str, Tuple[str, str]]:
                 logger.warning("Failed to read SR file %s: %s", fpath, exc)
                 continue
 
-            patient_id = getattr(ds, "PatientID", None)
+            patient_id = getattr(ds, "PatientID", None) or ""
             study_uid = getattr(ds, "StudyInstanceUID", None)
             if not study_uid:
                 logger.debug("Skipping SR without StudyInstanceUID: %s", fpath)
                 continue
-            sr_map[study_uid] = (patient_id, fpath)
+            sr_map[(patient_id, study_uid)] = (patient_id, fpath)
     return sr_map
 
 
@@ -100,13 +104,19 @@ def run(images_root: str, sr_root: str, output_manifest: str) -> None:
     rows = []
     for (study_uid, series_uid), meta_list in images_map.items():
         patient_ids = {m[0] for m in meta_list if m[0] is not None}
-        patient_id = next(iter(patient_ids), None)
+        patient_id = next(iter(patient_ids), "")
 
-        if study_uid not in sr_map:
-            logger.warning("No SR found for study %s; skipping series %s", study_uid, series_uid)
+        sr_key = (patient_id or "", study_uid)
+        if sr_key not in sr_map:
+            logger.warning(
+                "No SR found for patient %s study %s; skipping series %s",
+                patient_id or "<missing>",
+                study_uid,
+                series_uid,
+            )
             continue
 
-        sr_patient_id, sr_path = sr_map[study_uid]
+        sr_patient_id, sr_path = sr_map[sr_key]
         if patient_id and sr_patient_id and patient_id != sr_patient_id:
             logger.warning(
                 "Patient ID mismatch for study %s (images: %s, SR: %s); using SR value",
@@ -140,17 +150,335 @@ def run(images_root: str, sr_root: str, output_manifest: str) -> None:
     logger.info("Manifest saved to %s (%d rows)", output_manifest, len(df))
 
 
+def choose_blissauto_dir(study_dir: Path) -> Path | None:
+    """Pick BLISSAUTO series directory with the most slices for a study."""
+
+    candidates = [
+        d for d in study_dir.iterdir() if d.is_dir() and "BLISSAUTO" in d.name.upper()
+    ]
+
+    if not candidates:
+        return None
+
+    counts: List[Tuple[Path, int]] = []
+    for directory in candidates:
+        num_dcm = sum(1 for _ in directory.glob("*.dcm"))
+        counts.append((directory, num_dcm))
+
+    counts.sort(key=lambda x: (-x[1], x[0].name))
+    best_dir, best_count = counts[0]
+
+    if best_count == 0:
+        logger.warning(
+            "All BLISSAUTO series under %s contain 0 DICOM files; using first anyway.",
+            study_dir,
+        )
+
+    logger.info("[BLISSAUTO] %s -> %s (%d DICOM files)", study_dir.name, best_dir.name, best_count)
+    return best_dir
+
+
+def choose_sr_dir(study_dir: Path) -> Path | None:
+    """Return SR report directory for a study, preferring names containing REPORT."""
+
+    series_dirs = [d for d in study_dir.iterdir() if d.is_dir()]
+    if not series_dirs:
+        return None
+
+    report_dirs = [d for d in series_dirs if "REPORT" in d.name.upper()]
+    if report_dirs:
+        return report_dirs[0]
+
+    if len(series_dirs) == 1:
+        return series_dirs[0]
+
+    return None
+
+
+def find_blissauto(img_root: str) -> Dict[Tuple[str, str], Path]:
+    """Locate BLISSAUTO image series, keyed by (patient_id, study_name)."""
+
+    mapping: Dict[Tuple[str, str], Path] = {}
+    root = Path(img_root)
+
+    for patient_dir in root.iterdir():
+        if not patient_dir.is_dir():
+            continue
+
+        for study_dir in patient_dir.iterdir():
+            if not study_dir.is_dir():
+                continue
+
+            bliss = choose_blissauto_dir(study_dir)
+            if bliss is None:
+                logger.warning("No BLISSAUTO series found in %s / %s", patient_dir.name, study_dir.name)
+                continue
+
+            mapping[(patient_dir.name, study_dir.name)] = bliss
+            logger.info("[IMG] %s / %s -> %s", patient_dir.name, study_dir.name, bliss.name)
+
+    return mapping
+
+
+def find_sr(sr_root: str) -> Dict[Tuple[str, str], Path]:
+    """Locate SR series directories keyed by (patient_id, study_name)."""
+
+    mapping: Dict[Tuple[str, str], Path] = {}
+    root = Path(sr_root)
+
+    for patient_dir in root.iterdir():
+        if not patient_dir.is_dir():
+            continue
+
+        for study_dir in patient_dir.iterdir():
+            if not study_dir.is_dir():
+                continue
+
+            sr = choose_sr_dir(study_dir)
+            if sr is None:
+                logger.warning("No unambiguous SR in %s / %s", patient_dir.name, study_dir.name)
+                continue
+
+            mapping[(patient_dir.name, study_dir.name)] = sr
+            logger.info("[SR] %s / %s -> %s", patient_dir.name, study_dir.name, sr.name)
+
+    return mapping
+
+
+def load_image_volume(image_files: Iterable[Path]) -> np.ndarray | None:
+    """Load DICOM slices into a volume sorted for consistent anatomical order."""
+
+    files = list(image_files)
+    if not files:
+        return None
+
+    datasets: List[pydicom.dataset.Dataset] = []
+    for path in files:
+        try:
+            ds = dcmread(str(path))
+            if not hasattr(ds, "pixel_array"):
+                continue
+            datasets.append(ds)
+        except Exception as exc:  # pragma: no cover - logging only
+            logger.warning("Could not read image DICOM %s: %s", path, exc)
+
+    if not datasets:
+        return None
+
+    def sort_key(ds: pydicom.dataset.Dataset) -> Tuple[str, int, str]:
+        series = getattr(ds, "SeriesInstanceUID", "")
+        inst = getattr(ds, "InstanceNumber", 0)
+        sop = getattr(ds, "SOPInstanceUID", "")
+        try:
+            inst_int = int(inst)
+        except Exception:
+            inst_int = 0
+        return (series, inst_int, sop)
+
+    datasets.sort(key=sort_key)
+    slices = [ds.pixel_array.astype(np.float32) for ds in datasets]
+    volume = np.stack(slices, axis=0)
+    return volume
+
+
+def _get_concept_name(item: pydicom.dataset.Dataset) -> str | None:
+    if "ConceptNameCodeSequence" not in item:
+        return None
+    code_item = item.ConceptNameCodeSequence[0]
+    name = getattr(code_item, "CodeMeaning", None) or getattr(code_item, "CodeValue", None)
+    return name
+
+
+def _find_assessment_category_in_items(items: Iterable[pydicom.dataset.Dataset]):
+    """Recursively search ContentSequence for BI-RADS assessment category."""
+
+    for item in items:
+        concept_name = _get_concept_name(item)
+        if concept_name and "assessment category" in concept_name.lower():
+            raw_value = None
+            meaning = None
+
+            if "ConceptCodeSequence" in item:
+                code = item.ConceptCodeSequence[0]
+                raw_value = getattr(code, "CodeValue", None)
+                meaning = getattr(code, "CodeMeaning", None)
+
+            if raw_value is None and hasattr(item, "TextValue"):
+                raw_value = item.TextValue
+
+            return raw_value, meaning
+
+        if "ContentSequence" in item and item.ContentSequence:
+            nested = _find_assessment_category_in_items(item.ContentSequence)
+            if nested is not None:
+                return nested
+
+    return None
+
+
+def extract_assessment_category_from_sr(sr_path: Path):
+    try:
+        ds = dcmread(str(sr_path), stop_before_pixels=True)
+    except Exception as exc:  # pragma: no cover - logging only
+        logger.warning("Could not read SR DICOM %s: %s", sr_path, exc)
+        return None, None, None
+
+    if getattr(ds, "Modality", "").upper() != "SR":
+        return None, None, None
+
+    root_items = getattr(ds, "ContentSequence", None)
+    if not root_items:
+        return None, None, None
+
+    result = _find_assessment_category_in_items(root_items)
+    if result is None:
+        return None, None, None
+
+    raw_value, meaning = result
+    category_int = None
+
+    if isinstance(raw_value, str):
+        match = re.search(r"\d", raw_value)
+        if match:
+            category_int = int(match.group(0))
+
+    if category_int is None and isinstance(meaning, str):
+        match = re.search(r"\d", meaning)
+        if match:
+            category_int = int(match.group(0))
+
+    return category_int, raw_value, meaning
+
+
+def aggregate_exam_label(sr_files: Iterable[Path]) -> int | None:
+    """Return worst-case BI-RADS assessment across SR files for an exam."""
+
+    categories: List[int] = []
+
+    for sr_path in sr_files:
+        cat_int, _, _ = extract_assessment_category_from_sr(sr_path)
+        if cat_int is not None:
+            categories.append(cat_int)
+        else:
+            logger.warning("No assessment category found in %s", sr_path)
+
+    if not categories:
+        return None
+
+    return max(categories)
+
+
+def save_exam_pt(patient_id: str, study_name: str, bliss_dir: Path, sr_dir: Path, out_root: Path) -> bool:
+    """Create interim PyTorch tensor for an exam paired with SR label."""
+
+    image_files = list(bliss_dir.glob("*.dcm"))
+    sr_files = list(sr_dir.glob("*.dcm"))
+
+    logger.info("[PAIR] %s / %s | images=%d, sr=%d", patient_id, study_name, len(image_files), len(sr_files))
+
+    if not image_files:
+        logger.warning("No image DICOMs found for %s / %s", patient_id, study_name)
+        return False
+    if not sr_files:
+        logger.warning("No SR DICOMs found for %s / %s", patient_id, study_name)
+        return False
+
+    volume = load_image_volume(image_files)
+    if volume is None:
+        logger.warning("Could not build image volume for %s / %s", patient_id, study_name)
+        return False
+
+    label_int = aggregate_exam_label(sr_files)
+    if label_int is None:
+        logger.warning("No valid assessment category found for %s / %s", patient_id, study_name)
+        return False
+
+    image_tensor = torch.from_numpy(volume).unsqueeze(0).float()
+    label_tensor = torch.tensor(label_int, dtype=torch.long)
+
+    data = {
+        "image": image_tensor,
+        "label": label_tensor,
+        "patient_id": patient_id,
+        "study_name": study_name,
+    }
+
+    safe_study = study_name.replace(" ", "_").replace(".", "-")
+    out_path = out_root / f"{patient_id}__{safe_study}.pt"
+    torch.save(data, out_path)
+
+    logger.info(
+        "Saved %s (image shape=%s, label=%d)",
+        out_path.name,
+        tuple(image_tensor.shape),
+        label_int,
+    )
+    return True
+
+
+def build_pt_dataset(img_root: str, sr_root: str, out_root: str) -> None:
+    """Scan BLISSAUTO images and SR reports to build interim PT tensors."""
+
+    logger.info("Scanning for BLISSAUTO image series under %s", img_root)
+    bliss_map = find_blissauto(img_root)
+
+    logger.info("Scanning for SR report series under %s", sr_root)
+    sr_map = find_sr(sr_root)
+
+    common_pairs = set(bliss_map.keys()) & set(sr_map.keys())
+
+    logger.info("Matched %d IMG+SR study pairs", len(common_pairs))
+
+    out_root_path = Path(out_root)
+    out_root_path.mkdir(parents=True, exist_ok=True)
+
+    num_saved = 0
+    for patient, study in sorted(common_pairs):
+        bliss_dir = bliss_map[(patient, study)]
+        sr_dir = sr_map[(patient, study)]
+
+        if save_exam_pt(patient, study, bliss_dir, sr_dir, out_root_path):
+            num_saved += 1
+
+    incomplete_patients = (
+        {p for (p, _) in bliss_map.keys()} | {p for (p, _) in sr_map.keys()}
+    ) - {p for (p, _) in common_pairs}
+
+    if incomplete_patients:
+        logger.warning("Skipped patients missing either IMG or SR: %s", ", ".join(sorted(incomplete_patients)))
+
+    logger.info("Finished. Total exams saved: %d | Output: %s", num_saved, out_root_path)
+
+
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build manifest aligning DICOM images with SR labels")
-    parser.add_argument("--images-root", required=True, help="Root directory containing DICOM images")
-    parser.add_argument("--sr-root", required=True, help="Root directory containing DICOM SR files")
-    parser.add_argument("--output", required=True, help="Output CSV manifest path")
+    parser = argparse.ArgumentParser(description="Tools for BREAST-DIAGNOSIS image/SR alignment")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    manifest_parser = subparsers.add_parser(
+        "manifest", help="Build CSV manifest aligning DICOM images with SR labels"
+    )
+    manifest_parser.add_argument("--images-root", required=True, help="Root directory containing DICOM images")
+    manifest_parser.add_argument("--sr-root", required=True, help="Root directory containing DICOM SR files")
+    manifest_parser.add_argument("--output", required=True, help="Output CSV manifest path")
+
+    tensors_parser = subparsers.add_parser(
+        "tensors", help="Create interim PyTorch tensors from BLISSAUTO images and SR reports"
+    )
+    tensors_parser.add_argument("--images-root", required=True, help="Root directory containing BLISSAUTO DICOM images")
+    tensors_parser.add_argument("--sr-root", required=True, help="Root directory containing SR DICOM files")
+    tensors_parser.add_argument(
+        "--output-dir", required=True, help="Directory to store generated .pt files"
+    )
+
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
-    run(args.images_root, args.sr_root, args.output)
+    if args.command == "manifest":
+        run(args.images_root, args.sr_root, args.output)
+    else:
+        build_pt_dataset(args.images_root, args.sr_root, args.output_dir)
 
 
 if __name__ == "__main__":
