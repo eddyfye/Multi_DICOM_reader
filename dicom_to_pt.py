@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from pydicom import dcmread
 from tqdm import tqdm
 
@@ -344,9 +345,15 @@ def main():
             print("  [SKIP] No valid assessment category found in SR.")
             continue
 
-        # Convert to torch tensors
-        # Shape: [C, D, H, W] with C=1
-        image_tensor = torch.from_numpy(volume).unsqueeze(0).float()
+        # Convert to torch tensors and resize to a standard 64x64x64 volume
+        # Shape after resizing: [C=1, D=64, H=64, W=64]
+        image_tensor = torch.from_numpy(volume).unsqueeze(0).unsqueeze(0).float()
+        image_tensor = F.interpolate(
+            image_tensor,
+            size=(64, 64, 64),
+            mode="trilinear",
+            align_corners=False,
+        ).squeeze(0)
         label_tensor = torch.tensor(label_int, dtype=torch.long)
 
         data = {

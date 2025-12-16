@@ -2,18 +2,65 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
+from pathlib import Path
+from typing import Any
 
 import pytorch_lightning as pl
+import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
 
 from breast_diag_project.src.config import ExperimentConfig, load_config
 from breast_diag_project.src.dataset import BreastDiagnosisDataModule
 from breast_diag_project.src.models import create_model
 
 
+def _tensorboard_available() -> bool:
+    """Return whether a TensorBoard-compatible package is installed."""
+
+    return bool(importlib.util.find_spec("tensorboard") or importlib.util.find_spec("tensorboardX"))
+
+
+def _create_logger(output_config: dict[str, Any], save_dir: Path):
+    """Create a Lightning logger with a safe TensorBoard fallback."""
+
+    logger_preference = str(output_config.get("logger", "auto")).lower()
+    experiment_name = str(output_config.get("experiment_name", "breast_diag_experiment"))
+
+    if logger_preference == "none":
+        return False
+
+    if logger_preference in {"tensorboard", "tb"}:
+        if not _tensorboard_available():
+            raise ImportError(
+                "TensorBoard logging requested but no compatible package was found. "
+                "Install 'tensorboard' or 'tensorboardX' or set output.logger to 'csv' or 'auto'."
+            )
+        return TensorBoardLogger(save_dir=str(save_dir), name=experiment_name)
+
+    if logger_preference == "csv":
+        return CSVLogger(save_dir=str(save_dir), name=experiment_name)
+
+    # Auto mode: prefer TensorBoard when available, otherwise default to CSV.
+    if _tensorboard_available():
+        return TensorBoardLogger(save_dir=str(save_dir), name=experiment_name)
+    return CSVLogger(save_dir=str(save_dir), name=experiment_name)
+
+
+def _configure_matmul_precision(training_config: dict[str, Any]) -> None:
+    """Optionally configure matmul precision for Tensor Core usage."""
+
+    precision_setting = training_config.get("matmul_precision")
+    if precision_setting:
+        torch.set_float32_matmul_precision(str(precision_setting))
+
+
 def run_training(config: ExperimentConfig) -> None:
     data_module = BreastDiagnosisDataModule(config)
     model = create_model(config.model, config.training)
+
+    _configure_matmul_precision(config.training)
 
     save_dir = config.output_dir
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -33,6 +80,7 @@ def run_training(config: ExperimentConfig) -> None:
         log_every_n_steps=int(config.trainer.get("log_every_n_steps", 50)),
         callbacks=[checkpoint_cb],
         default_root_dir=save_dir,
+        logger=_create_logger(config.output, save_dir),
     )
 
     trainer.fit(model, datamodule=data_module)
