@@ -16,6 +16,7 @@ Scan a root folder recursively for DICOMs, group them by
         }
 """
 
+import os
 from pathlib import Path
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -35,7 +36,8 @@ DICOM_ROOT = r"Y:\Dataset\BREAST-DIAGNOSIS_BLISSAUTO_SR"
 OUT_ROOT = r"Y:\Dataset\BREAST-DIAGNOSIS_PT_EXAMS"
 
 # Optional number of worker threads for header parsing (set >1 for speed).
-NUM_WORKERS = 1
+# Default to the number of CPU cores to accelerate scanning on modern machines.
+NUM_WORKERS = max(1, os.cpu_count() or 1)
 # ===========================================
 
 
@@ -98,13 +100,20 @@ def build_exam_file_dict(root_dir: str, num_workers: int = 1):
     # Use a thread pool to speed up header parsing when desired.
     if num_workers and num_workers > 1:
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = {executor.submit(_read_dicom_header, p): p for p in files}
-            for future in tqdm(futures, total=len(futures), desc="Scanning DICOM files", unit="file"):
-                ds, err = future.result()
-                dcm_path = futures[future]
+            def _parse_path(dcm_path):
+                ds, err = _read_dicom_header(dcm_path)
+                return dcm_path, ds, err
+
+            for dcm_path, ds, err in tqdm(
+                executor.map(_parse_path, files, chunksize=32),
+                total=len(files),
+                desc="Scanning DICOM files",
+                unit="file",
+            ):
                 if err:
                     print(f"[WARN] Cannot read DICOM header {dcm_path}: {err}")
                     continue
+
                 handle_ds(ds, dcm_path)
     else:
         for dcm_path in tqdm(files, desc="Scanning DICOM files", unit="file"):
