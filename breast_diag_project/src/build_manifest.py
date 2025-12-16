@@ -19,6 +19,7 @@ import pandas as pd
 import pydicom
 import torch
 from pydicom import dcmread
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
@@ -35,24 +36,29 @@ def _collect_image_metadata(images_root: str) -> Dict[Tuple[str, str], List[Imag
     """
 
     images_map: Dict[Tuple[str, str], List[ImageMeta]] = {}
-    for root, _, files in os.walk(images_root):
-        for fname in files:
-            fpath = os.path.join(root, fname)
-            try:
-                ds = pydicom.dcmread(fpath, stop_before_pixels=True, force=True)
-            except Exception as exc:  # pragma: no cover - logging only
-                logger.warning("Failed to read DICOM image %s: %s", fpath, exc)
-                continue
+    total_files = sum(len(files) for _, _, files in os.walk(images_root))
+    with tqdm(total=total_files, desc="Scanning images", unit="file") as progress:
+        for root, _, files in os.walk(images_root):
+            for fname in files:
+                fpath = os.path.join(root, fname)
+                try:
+                    ds = pydicom.dcmread(fpath, stop_before_pixels=True, force=True)
+                except Exception as exc:  # pragma: no cover - logging only
+                    logger.warning("Failed to read DICOM image %s: %s", fpath, exc)
+                    progress.update()
+                    continue
 
-            patient_id = getattr(ds, "PatientID", None)
-            study_uid = getattr(ds, "StudyInstanceUID", None)
-            series_uid = getattr(ds, "SeriesInstanceUID", None)
-            if not study_uid or not series_uid:
-                logger.debug("Skipping file without Study/Series UID: %s", fpath)
-                continue
+                patient_id = getattr(ds, "PatientID", None)
+                study_uid = getattr(ds, "StudyInstanceUID", None)
+                series_uid = getattr(ds, "SeriesInstanceUID", None)
+                if not study_uid or not series_uid:
+                    logger.debug("Skipping file without Study/Series UID: %s", fpath)
+                    progress.update()
+                    continue
 
-            key = (study_uid, series_uid)
-            images_map.setdefault(key, []).append((patient_id, study_uid, series_uid, fpath))
+                key = (study_uid, series_uid)
+                images_map.setdefault(key, []).append((patient_id, study_uid, series_uid, fpath))
+                progress.update()
     return images_map
 
 
@@ -63,21 +69,26 @@ def _collect_sr_metadata(sr_root: str) -> Dict[Tuple[str, str], Tuple[str, str]]
     """
 
     sr_map: Dict[Tuple[str, str], Tuple[str, str]] = {}
-    for root, _, files in os.walk(sr_root):
-        for fname in files:
-            fpath = os.path.join(root, fname)
-            try:
-                ds = pydicom.dcmread(fpath, stop_before_pixels=True, force=True)
-            except Exception as exc:  # pragma: no cover - logging only
-                logger.warning("Failed to read SR file %s: %s", fpath, exc)
-                continue
+    total_files = sum(len(files) for _, _, files in os.walk(sr_root))
+    with tqdm(total=total_files, desc="Scanning SR", unit="file") as progress:
+        for root, _, files in os.walk(sr_root):
+            for fname in files:
+                fpath = os.path.join(root, fname)
+                try:
+                    ds = pydicom.dcmread(fpath, stop_before_pixels=True, force=True)
+                except Exception as exc:  # pragma: no cover - logging only
+                    logger.warning("Failed to read SR file %s: %s", fpath, exc)
+                    progress.update()
+                    continue
 
-            patient_id = getattr(ds, "PatientID", None) or ""
-            study_uid = getattr(ds, "StudyInstanceUID", None)
-            if not study_uid:
-                logger.debug("Skipping SR without StudyInstanceUID: %s", fpath)
-                continue
-            sr_map[(patient_id, study_uid)] = (patient_id, fpath)
+                patient_id = getattr(ds, "PatientID", None) or ""
+                study_uid = getattr(ds, "StudyInstanceUID", None)
+                if not study_uid:
+                    logger.debug("Skipping SR without StudyInstanceUID: %s", fpath)
+                    progress.update()
+                    continue
+                sr_map[(patient_id, study_uid)] = (patient_id, fpath)
+                progress.update()
     return sr_map
 
 
