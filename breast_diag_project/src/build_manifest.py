@@ -444,7 +444,9 @@ def build_pt_dataset(img_root: str, sr_root: str, out_root: str) -> None:
     out_root_path.mkdir(parents=True, exist_ok=True)
 
     num_saved = 0
-    for patient, study in sorted(common_pairs):
+    for patient, study in tqdm(
+        sorted(common_pairs), desc="Building PT dataset", unit="exam"
+    ):
         bliss_dir = bliss_map[(patient, study)]
         sr_dir = sr_map[(patient, study)]
 
