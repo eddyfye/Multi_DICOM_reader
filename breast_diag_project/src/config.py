@@ -45,7 +45,7 @@ class ExperimentConfig:
 
     @property
     def manifest_path(self) -> Path:
-        return Path(self.data["manifest_path"])
+        return self.interim_dir / self.manifest_filename
 
     @property
     def raw_images_dir(self) -> Path:
@@ -58,6 +58,18 @@ class ExperimentConfig:
     @property
     def processed_dir(self) -> Path:
         return Path(self.paths["processed_dir"])
+
+    @property
+    def interim_dir(self) -> Path:
+        if "interim_dir" in self.paths:
+            return Path(self.paths["interim_dir"])
+        return self.processed_dir.parent / "interim"
+
+    @property
+    def output_dir(self) -> Path:
+        if "output_dir" in self.paths:
+            return Path(self.paths["output_dir"])
+        return Path(self.output.get("save_dir", "outputs"))
 
     @property
     def manifest_filename(self) -> str:
@@ -76,8 +88,8 @@ def _validate_required_keys(config: Dict[str, Any]) -> None:
         if key not in config["paths"]:
             raise KeyError(f"Config paths missing '{key}'")
 
-    if not isinstance(config.get("data"), dict) or "manifest_path" not in config["data"]:
-        raise KeyError("Config data section must include 'manifest_path'")
+    if not isinstance(config.get("data"), dict):
+        raise KeyError("Config data section must include 'data' dictionary")
 
 
 def load_config(path: str) -> ExperimentConfig:

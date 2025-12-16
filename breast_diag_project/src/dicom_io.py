@@ -13,24 +13,46 @@ def read_dicom_header(path: str) -> pydicom.dataset.Dataset:
     return pydicom.dcmread(path, stop_before_pixels=True, force=True)
 
 
-def _sort_paths_by_instance_number(image_paths: List[str]) -> List[Tuple[int, str]]:
+def _sort_paths_by_instance_number(image_paths: List[str]) -> List[Tuple[int, str, pydicom.dataset.Dataset]]:
     sorted_paths = []
     for path in image_paths:
         ds = pydicom.dcmread(path, stop_before_pixels=False, force=True)
         instance_number = int(getattr(ds, "InstanceNumber", 0))
         sorted_paths.append((instance_number, path, ds))
     sorted_paths.sort(key=lambda x: x[0])
-    return [(inst, path) for inst, path, _ in sorted_paths]
+    return sorted_paths
 
 
-def load_series_pixel_array(image_paths: List[str]) -> np.ndarray:
+def _estimate_spacing(sorted_datasets: List[pydicom.dataset.Dataset]) -> Tuple[float, float, float]:
+    first = sorted_datasets[0]
+    try:
+        pixel_spacing = getattr(first, "PixelSpacing", [1.0, 1.0])
+        row_spacing, col_spacing = float(pixel_spacing[0]), float(pixel_spacing[1])
+    except Exception:
+        row_spacing = col_spacing = 1.0
+
+    try:
+        if len(sorted_datasets) > 1:
+            positions = [np.array(getattr(ds, "ImagePositionPatient", [0, 0, i])) for i, ds in enumerate(sorted_datasets)]
+            deltas = [abs(pos[2] - positions[0][2]) for pos in positions[1:]]
+            slice_spacing = float(np.median(deltas)) if deltas else float(getattr(first, "SliceThickness", 1.0))
+        else:
+            slice_spacing = float(getattr(first, "SliceThickness", 1.0))
+    except Exception:
+        slice_spacing = 1.0
+
+    return (slice_spacing, row_spacing, col_spacing)
+
+
+def load_series_pixel_array(image_paths: List[str], return_spacing: bool = False):
     """Load and stack a DICOM series into a numpy array.
 
     Args:
         image_paths: List of file paths belonging to the same series.
+        return_spacing: When True, also return (z, y, x) spacing tuple.
 
     Returns:
-        Numpy array of shape [1, D, H, W] with dtype float32.
+        Numpy array of shape [1, D, H, W] with dtype float32, optionally with spacing.
     """
 
     if not image_paths:
@@ -38,12 +60,17 @@ def load_series_pixel_array(image_paths: List[str]) -> np.ndarray:
 
     sorted_with_paths = _sort_paths_by_instance_number(image_paths)
     slices = []
-    for _, path in sorted_with_paths:
-        ds = pydicom.dcmread(path, stop_before_pixels=False, force=True)
+    datasets = []
+    for _, path, ds in sorted_with_paths:
         pixel_array = ds.pixel_array.astype(np.float32)
         slices.append(pixel_array)
+        datasets.append(ds)
     volume = np.stack(slices, axis=0)  # [D, H, W]
     volume = volume[np.newaxis, ...]  # [1, D, H, W]
+
+    if return_spacing:
+        spacing = _estimate_spacing(datasets)
+        return volume, spacing
     return volume
 
 

@@ -1,47 +1,85 @@
 """Utilities for parsing DICOM Structured Reports (SR) into labels."""
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import pydicom
 
 
+def _get_concept_name(item) -> Optional[str]:
+    if "ConceptNameCodeSequence" not in item:
+        return None
+    code_item = item.ConceptNameCodeSequence[0]
+    name = getattr(code_item, "CodeMeaning", None)
+    if not name:
+        name = getattr(code_item, "CodeValue", None)
+    return name
+
+
+def _find_assessment_category(items) -> Optional[Tuple[Any, Any]]:
+    for item in items:
+        concept_name = _get_concept_name(item)
+        if concept_name and "assessment category" in concept_name.lower():
+            raw_value = None
+            meaning = None
+
+            if "ConceptCodeSequence" in item:
+                c = item.ConceptCodeSequence[0]
+                raw_value = getattr(c, "CodeValue", None)
+                meaning = getattr(c, "CodeMeaning", None)
+
+            if raw_value is None and hasattr(item, "TextValue"):
+                raw_value = item.TextValue
+
+            return raw_value, meaning
+
+        if "ContentSequence" in item and item.ContentSequence:
+            res = _find_assessment_category(item.ContentSequence)
+            if res is not None:
+                return res
+    return None
+
+
+def _extract_assessment_category_from_sr(sr_path: str) -> Tuple[Optional[int], Optional[Any], Optional[Any]]:
+    try:
+        ds = pydicom.dcmread(sr_path, stop_before_pixels=True, force=True)
+    except Exception:
+        return None, None, None
+
+    if getattr(ds, "Modality", "").upper() != "SR":
+        return None, None, None
+
+    root_items: Sequence[Any] | None = getattr(ds, "ContentSequence", None)
+    if not root_items:
+        return None, None, None
+
+    res = _find_assessment_category(root_items)
+    if res is None:
+        return None, None, None
+
+    raw_value, meaning = res
+    category_int = None
+
+    if isinstance(raw_value, str):
+        digits = [c for c in raw_value if c.isdigit()]
+        if digits:
+            category_int = int(digits[0])
+
+    if category_int is None and isinstance(meaning, str):
+        digits = [c for c in meaning if c.isdigit()]
+        if digits:
+            category_int = int(digits[0])
+
+    return category_int, raw_value, meaning
+
+
 def parse_sr_to_label(sr_path: str, label_config: Dict[str, Any]) -> Dict[str, Any]:
-    """Parse a DICOM SR file and return training-ready labels.
+    """Parse a DICOM SR file and return training-ready labels using assessment category."""
 
-    Notes:
-        The extraction logic here is intentionally lightweight and contains
-        TODO markers where project-specific codes should be inserted. The
-        function ensures a consistent output structure downstream.
-    """
+    category_int, raw_value, meaning = _extract_assessment_category_from_sr(sr_path)
 
-    ds = pydicom.dcmread(sr_path, stop_before_pixels=True, force=True)
-
-    # Placeholder logic: search through ContentSequence for malignancy flag.
-    diagnosis_text = ""
-    target = 0
-
-    def _walk_content_sequence(sequence):
-        nonlocal diagnosis_text, target
-        for item in sequence:
-            if hasattr(item, "TextValue") and not diagnosis_text:
-                diagnosis_text = str(item.TextValue)
-            if hasattr(item, "ConceptNameCodeSequence"):
-                codes = [getattr(code, "CodeValue", "") for code in item.ConceptNameCodeSequence]
-                # TODO: Replace with project-specific code detection using label_config["sr_field_codes"].
-                if any(code in label_config.get("sr_field_codes", []) for code in codes):
-                    if hasattr(item, "NumericValue"):
-                        try:
-                            target = 1 if float(item.NumericValue) > 0 else 0
-                        except Exception:
-                            target = 0
-                    elif hasattr(item, "TextValue"):
-                        target = 1 if str(item.TextValue).strip().lower() in {"yes", "malignant"} else 0
-            if hasattr(item, "ContentSequence"):
-                _walk_content_sequence(item.ContentSequence)
-
-    if hasattr(ds, "ContentSequence"):
-        _walk_content_sequence(ds.ContentSequence)
+    target = category_int if category_int is not None else 0
+    diagnosis_text = meaning if meaning is not None else str(raw_value or "")
 
     return {"target": int(target), "diagnosis_text": diagnosis_text}
 
