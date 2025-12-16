@@ -3,17 +3,36 @@
     "raw_images_dir": "data/raw/images",
     "raw_sr_dir": "data/raw/sr",
     "processed_dir": "data/processed",
-    "manifest_filename": "manifest.csv"
+    "manifest_filename": "manifest.csv",
+    "interim_dir": "data/interim",
+    "output_dir": "outputs/baseline"
   },
   "data": {
-    "manifest_path": "data/processed/manifest.csv",
     "cache_images": true,
     "num_workers": 4,
-    "train_val_test_split": [0.7, 0.15, 0.15]
+    "train_val_test_split": [0.7, 0.15, 0.15],
+    "preprocessing": {
+      "clip_percentiles": [1, 99],
+      "resample_to_isotropic": true,
+      "isotropic_method": "median"
+    },
+    "augmentations": {
+      "use_randaugment": true,
+      "num_layers": 3,
+      "flip_lr": true,
+      "rotation_degrees": [5, 15],
+      "elastic": {
+        "alpha": 1.5,
+        "sigma": 8.0
+      },
+      "intensity": {
+        "gamma_range": [0.85, 1.15],
+        "noise_std": 0.01
+      }
+    }
   },
   "labels": {
-    "type": "binary_malignancy",
-    "sr_field_codes": ["TODO_FILL_ME"]
+    "type": "binary_malignancy"
   },
   "model": {
     "name": "simple_3d_cnn",

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -16,7 +15,7 @@ def run_training(config: ExperimentConfig) -> None:
     data_module = BreastDiagnosisDataModule(config)
     model = create_model(config.model, config.training)
 
-    save_dir = Path(config.output.get("save_dir", "outputs"))
+    save_dir = config.output_dir
     save_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_cb = ModelCheckpoint(
         dirpath=save_dir,
