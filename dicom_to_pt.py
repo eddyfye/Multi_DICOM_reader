@@ -18,9 +18,12 @@ Scan a root folder recursively for DICOMs, group them by
 
 from pathlib import Path
 import re
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import torch
 from pydicom import dcmread
+from tqdm import tqdm
 
 
 # ================== CONFIG ==================
@@ -30,10 +33,22 @@ DICOM_ROOT = r"Y:\Dataset\BREAST-DIAGNOSIS_BLISSAUTO_SR"
 
 # Output directory for .pt files (one per (patient, study))
 OUT_ROOT = r"Y:\Dataset\BREAST-DIAGNOSIS_PT_EXAMS"
+
+# Optional number of worker threads for header parsing (set >1 for speed).
+NUM_WORKERS = 1
 # ===========================================
 
 
-def build_exam_file_dict(root_dir: str):
+def _read_dicom_header(dcm_path: Path):
+    """Read a DICOM header (without pixels) and extract routing info."""
+    try:
+        ds = dcmread(str(dcm_path), stop_before_pixels=True)
+        return ds, None
+    except Exception as e:
+        return None, e
+
+
+def build_exam_file_dict(root_dir: str, num_workers: int = 1):
     """
     Recursively walk root_dir, read each DICOM header, and build a dictionary:
 
@@ -49,22 +64,23 @@ def build_exam_file_dict(root_dir: str):
       - PatientID         (0010,0020)
       - StudyInstanceUID  (0020,000D)
       - Modality          (0008,0060)
+
+    Args:
+        root_dir: Path to the root directory containing DICOM files.
+        num_workers: Optional number of worker threads for header parsing.
+            Set >1 to speed up scanning on fast disks/CPUs.
     """
     root = Path(root_dir)
     exam_dict = {}
 
-    for dcm_path in root.rglob("*.dcm"):
-        try:
-            ds = dcmread(str(dcm_path), stop_before_pixels=True)
-        except Exception as e:
-            print(f"[WARN] Cannot read DICOM header {dcm_path}: {e}")
-            continue
+    files = list(root.rglob("*.dcm"))
 
+    def handle_ds(ds, dcm_path):
         patient_id = getattr(ds, "PatientID", None)
         study_uid = getattr(ds, "StudyInstanceUID", None)
         if not patient_id or not study_uid:
             print(f"[WARN] Missing PatientID or StudyInstanceUID in {dcm_path}, skipping.")
-            continue
+            return
 
         modality = getattr(ds, "Modality", "").upper()
 
@@ -78,6 +94,26 @@ def build_exam_file_dict(root_dir: str):
             entry["sr_files"].append(dcm_path)
         else:
             entry["image_files"].append(dcm_path)
+
+    # Use a thread pool to speed up header parsing when desired.
+    if num_workers and num_workers > 1:
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = {executor.submit(_read_dicom_header, p): p for p in files}
+            for future in tqdm(futures, total=len(futures), desc="Scanning DICOM files", unit="file"):
+                ds, err = future.result()
+                dcm_path = futures[future]
+                if err:
+                    print(f"[WARN] Cannot read DICOM header {dcm_path}: {err}")
+                    continue
+                handle_ds(ds, dcm_path)
+    else:
+        for dcm_path in tqdm(files, desc="Scanning DICOM files", unit="file"):
+            ds, err = _read_dicom_header(dcm_path)
+            if err:
+                print(f"[WARN] Cannot read DICOM header {dcm_path}: {err}")
+                continue
+
+            handle_ds(ds, dcm_path)
 
     return exam_dict
 
@@ -265,7 +301,7 @@ def main():
 
     # 1) Build (patient, study) -> {image_files, sr_files} dictionary
     print(f"Scanning DICOM files under: {dicom_root}")
-    exam_dict = build_exam_file_dict(dicom_root)
+    exam_dict = build_exam_file_dict(dicom_root, num_workers=NUM_WORKERS)
     print(f"Found {len(exam_dict)} unique (PatientID, StudyInstanceUID) exams.\n")
 
     num_ok = 0
