@@ -50,7 +50,6 @@
       "optimizer": "adamw",
       "weight_decay": 0.0001,
       "precision": "16-mixed",
-      "amp_backend": "native",
       "gradient_clip_val": 1.0,
       "matmul_precision": "medium"
     },
