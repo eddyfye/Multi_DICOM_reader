@@ -4,6 +4,7 @@ dicom_to_pt.py
 Scan a root folder recursively for DICOMs, group them by
 (PatientID, StudyInstanceUID), then for each exam:
   - stack all non-SR images into a 3D volume (numpy → torch tensor)
+        (with optional downsampling to enforce a maximum estimated volume size)
   - parse SR DICOMs to extract:
         Supplementary data -> Overall assessment -> Assessment category
     as a BI-RADS integer
@@ -39,6 +40,15 @@ OUT_ROOT = r"Y:\Dataset\BREAST-DIAGNOSIS_PT_EXAMS"
 # Optional number of worker threads for header parsing (set >1 for speed).
 # Default to the number of CPU cores to accelerate scanning on modern machines.
 NUM_WORKERS = max(1, os.cpu_count() or 1)
+
+# Upper bound for the estimated in-memory size of a volume before stacking
+# (number of voxels * 4 bytes for float32). Volumes that would exceed this
+# limit are downsampled slice-by-slice; if they would still exceed the limit,
+# they are skipped.
+MAX_VOLUME_BYTES = 512 * 1024 * 1024  # 512 MB
+
+# Target output shape for interpolation.
+TARGET_SHAPE = (64, 64, 64)
 # ===========================================
 
 
@@ -129,7 +139,7 @@ def build_exam_file_dict(root_dir: str, num_workers: int = 1):
     return exam_dict
 
 
-def load_image_volume(image_files):
+def load_image_volume(image_files, max_volume_bytes: int = MAX_VOLUME_BYTES):
     """
     Given a list of DICOM image files (non-SR) that belong to the same study,
     load them into a 3D numpy array [num_slices, H, W].
@@ -137,6 +147,11 @@ def load_image_volume(image_files):
     Slices are sorted by:
         (SeriesInstanceUID, InstanceNumber, SOPInstanceUID)
     to ensure a stable and anatomically consistent order.
+
+    If the estimated in-memory volume would exceed ``max_volume_bytes``, the
+    slices are downsampled in-plane before stacking. If the estimated size would
+    still exceed the threshold after downsampling, the volume is skipped and
+    ``None`` is returned.
     """
     if not image_files:
         return None
@@ -167,9 +182,59 @@ def load_image_volume(image_files):
 
     datasets.sort(key=sort_key)
 
+    # Estimate volume size using header-derived dimensions before reading all
+    # pixel data so we can decide whether downsampling is needed.
+    first_ds = datasets[0]
+    rows = getattr(first_ds, "Rows", None)
+    cols = getattr(first_ds, "Columns", None)
+    if not rows or not cols:
+        print("  [WARN] Missing Rows/Columns metadata; cannot estimate size.")
+    num_slices = len(datasets)
+
+    dtype_bytes = np.dtype(np.float32).itemsize
+    estimated_bytes = None
+    if rows and cols:
+        estimated_bytes = num_slices * rows * cols * dtype_bytes
+
+    downsample_factor = 1.0
+    target_h, target_w = rows, cols
+
+    if estimated_bytes and estimated_bytes > max_volume_bytes:
+        ratio = max_volume_bytes / estimated_bytes
+        downsample_factor = max(0.0, ratio) ** 0.5  # apply to H and W
+        target_h = max(1, int(rows * downsample_factor))
+        target_w = max(1, int(cols * downsample_factor))
+
+        # Recompute estimated size with downsampled dimensions
+        adjusted_bytes = num_slices * target_h * target_w * dtype_bytes
+
+        if adjusted_bytes > max_volume_bytes:
+            print(
+                f"  [SKIP] Estimated volume size {adjusted_bytes/1e6:.1f} MB "
+                f"exceeds limit {max_volume_bytes/1e6:.1f} MB even after "
+                f"downsampling factor {downsample_factor:.3f}."
+            )
+            return None
+
+        print(
+            f"  [INFO] Downsampling slices from ({rows}, {cols}) to "
+            f"({target_h}, {target_w}) to respect memory limit."
+        )
+
     slices = []
     for ds in datasets:
         arr = ds.pixel_array.astype(np.float32)
+
+        if downsample_factor < 1.0 and target_h and target_w:
+            arr_tensor = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0)
+            arr_tensor = F.interpolate(
+                arr_tensor,
+                size=(target_h, target_w),
+                mode="bilinear",
+                align_corners=False,
+            )
+            arr = arr_tensor.squeeze().numpy()
+
         slices.append(arr)
 
     volume = np.stack(slices, axis=0)  # [num_slices, H, W]
@@ -335,9 +400,9 @@ def main():
             continue
 
         # Build image volume
-        volume = load_image_volume(image_files)
+        volume = load_image_volume(image_files, max_volume_bytes=MAX_VOLUME_BYTES)
         if volume is None:
-            print("  [SKIP] Could not build image volume.")
+            print("  [SKIP] Could not build image volume (read failure or size limit).")
             continue
 
         # Extract BI-RADS category from SR
@@ -351,7 +416,7 @@ def main():
         image_tensor = torch.from_numpy(volume).unsqueeze(0).unsqueeze(0).float()
         image_tensor = F.interpolate(
             image_tensor,
-            size=(64, 64, 64),
+            size=TARGET_SHAPE,
             mode="trilinear",
             align_corners=False,
         ).squeeze(0)

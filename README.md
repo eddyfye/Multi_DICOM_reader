@@ -64,7 +64,11 @@ need to customise where the build artefacts are written.
   and reports distinguishable by filename prefixes.
 - `dicom_to_pt.py`: converts a mixed DICOM tree into per-exam PyTorch tensors,
   stacking imaging slices into a volume and extracting BI-RADS labels from SR
-  files.
+  files. The script will estimate the in-memory size of each study's volume and
+  downsample slices when the configured `MAX_VOLUME_BYTES` threshold would be
+  exceeded, logging whether a study was downsampled or skipped. The final
+  tensor is interpolated to the `TARGET_SHAPE` (default 64×64×64) for training
+  consistency.
 - `install_dependencies.py`: downloads the requirements into a local cache and
   installs from that cache to support offline or repeatable setups.
 - `build_executable.py`: wraps `PyInstaller` to package any entry script into a

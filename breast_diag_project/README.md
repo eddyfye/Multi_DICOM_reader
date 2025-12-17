@@ -32,6 +32,15 @@ describe how the pieces fit together.
    with the appropriate configuration. The experiment runner loads the manifest,
    constructs datasets, and trains the model defined in `src/models.py`.
 
+### Preprocessing guardrails
+
+The dataset utilities can downsample overly large volumes before writing cached
+`.pt` files. Configure `data.preprocessing.max_volume_bytes` or
+`data.preprocessing.max_voxels` in your experiment config to cap the allowed
+volume size. When a study exceeds these limits, the loader will log a message,
+downsample the volume to fit within the cap, and skip the study entirely if it
+still cannot meet the constraints and `downsample_on_overflow` is disabled.
+
 ## Example commands
 
 Build a manifest CSV mapping image series to SR reports:
