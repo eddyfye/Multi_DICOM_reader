@@ -31,6 +31,7 @@ def _find_assessment_category(items) -> Optional[Tuple[Any, Any]]:
             if raw_value is None and hasattr(item, "TextValue"):
                 raw_value = item.TextValue
 
+            # Found a matching SR node; bubble the values up the recursion stack.
             return raw_value, meaning
 
         if "ContentSequence" in item and item.ContentSequence:

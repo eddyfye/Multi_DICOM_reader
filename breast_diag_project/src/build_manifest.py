@@ -119,6 +119,7 @@ def run(images_root: str, sr_root: str, output_manifest: str) -> None:
 
         sr_key = (patient_id or "", study_uid)
         if sr_key not in sr_map:
+            # Skip image series that lack a corresponding SR report.
             logger.warning(
                 "No SR found for patient %s study %s; skipping series %s",
                 patient_id or "<missing>",

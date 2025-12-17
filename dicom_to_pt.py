@@ -96,6 +96,7 @@ def build_exam_file_dict(root_dir: str, num_workers: int = 1):
         if modality == "SR":
             entry["sr_files"].append(dcm_path)
         else:
+            # Treat any non-SR modality as an imaging slice for the volume.
             entry["image_files"].append(dcm_path)
 
     # Use a thread pool to speed up header parsing when desired.

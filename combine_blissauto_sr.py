@@ -79,9 +79,11 @@ def choose_sr_dir(study_dir: Path) -> Path | None:
 
     report_dirs = [d for d in series_dirs if "REPORT" in d.name.upper()]
     if report_dirs:
+        # Prefer explicitly labeled report folders when present.
         return report_dirs[0]
 
     if len(series_dirs) == 1:
+        # Fall back to the sole directory if it's unambiguous.
         return series_dirs[0]
 
     return None  # ambiguous
@@ -102,6 +104,7 @@ def find_blissauto(img_root: str):
             if not study_dir.is_dir():
                 continue
 
+            # Pick the BLISSAUTO series with the highest slice count.
             bliss = choose_blissauto_dir(study_dir)
             if bliss is None:
                 print(f"[IMG WARN] No BLISSAUTO in {patient_dir.name} / {study_dir.name}")
@@ -128,6 +131,7 @@ def find_sr(sr_root: str):
             if not study_dir.is_dir():
                 continue
 
+            # Prefer clearly labeled report series; otherwise skip ambiguous cases.
             sr = choose_sr_dir(study_dir)
             if sr is None:
                 print(f"[SR WARN] No unambiguous SR in {patient_dir.name} / {study_dir.name}")

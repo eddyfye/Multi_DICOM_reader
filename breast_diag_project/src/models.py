@@ -30,6 +30,7 @@ class Simple3DCNN(pl.LightningModule):
             layers.append(nn.ReLU(inplace=True))
             layers.append(nn.MaxPool3d(kernel_size=2, stride=2))
             if dropout > 0:
+                # Dropout optionally regularizes each downsampling stage.
                 layers.append(nn.Dropout3d(dropout))
             current_channels = feat
         self.feature_extractor = nn.Sequential(*layers)

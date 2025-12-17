@@ -22,6 +22,7 @@ def _zscore_tensor(tensor: torch.Tensor) -> torch.Tensor:
     mean = tensor.mean()
     std = tensor.std()
     if std == 0:
+        # Avoid division by zero when the volume is constant.
         return tensor - mean
     return (tensor - mean) / std
 
@@ -37,6 +38,7 @@ def resample_to_spacing(
     if len(current_spacing) != 3 or len(target_spacing) != 3:
         return tensor
 
+    # Compute scaling factor per axis to convert current voxel spacing.
     scale = torch.tensor(current_spacing, dtype=torch.float32) / torch.tensor(
         target_spacing, dtype=torch.float32
     )
@@ -91,6 +93,7 @@ def preprocess_volume(
     vol = np.nan_to_num(vol)
     tensor = torch.from_numpy(vol)
     if tensor.ndim == 3:
+        # Ensure channel dimension exists for downstream interpolation steps.
         tensor = tensor.unsqueeze(0)
 
     target_spacing = None

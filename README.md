@@ -3,7 +3,9 @@
 This repository provides a small command-line utility for reading DICOM files
 and exporting selected metadata to a CSV file. The script is written to be
 compatible with [PyInstaller](https://pyinstaller.org/en/stable/) so it can be
-distributed as a standalone executable.
+distributed as a standalone executable. It also contains a small research
+project (`breast_diag_project/`) focused on preparing and training models for
+the TCIA BREAST-DIAGNOSIS dataset.
 
 ## Requirements
 
@@ -54,6 +56,25 @@ This produces a one-file executable in the `dist/` directory and places the
 generated spec file in `pyinstaller/`. Adjust the `APP_NAME`, `SPEC_DIR`,
 `DIST_DIR`, or `BUILD_DIR` environment variables when invoking the script if you
 need to customise where the build artefacts are written.
+
+## Additional utilities
+
+- `combine_blissauto_sr.py`: consolidates BLISSAUTO image series and structured
+  report (SR) DICOMs into a single directory per patient while keeping images
+  and reports distinguishable by filename prefixes.
+- `dicom_to_pt.py`: converts a mixed DICOM tree into per-exam PyTorch tensors,
+  stacking imaging slices into a volume and extracting BI-RADS labels from SR
+  files.
+- `install_dependencies.py`: downloads the requirements into a local cache and
+  installs from that cache to support offline or repeatable setups.
+- `build_executable.py`: wraps `PyInstaller` to package any entry script into a
+  standalone binary.
+
+## Breast diagnosis project
+
+See [`breast_diag_project/README.md`](breast_diag_project/README.md) for details
+on the experiment helpers, dataset preparation scripts, and configuration files
+used with the TCIA BREAST-DIAGNOSIS dataset.
 
 ## License
 
