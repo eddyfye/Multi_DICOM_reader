@@ -21,6 +21,7 @@ def run_experiment(config_path: str, build_manifest_flag: bool = False) -> None:
     interim_dir.mkdir(parents=True, exist_ok=True)
 
     if build_manifest_flag or not manifest_path.exists():
+        # Rebuild the manifest when requested or missing to keep data aligned.
         build_manifest.run(str(images_root), str(sr_root), str(manifest_path))
 
     train.run_training(config)

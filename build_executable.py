@@ -22,6 +22,7 @@ def run_pyinstaller(
     dist_dir: Path,
     build_dir: Path,
 ) -> None:
+    # Assemble the PyInstaller invocation in a list to avoid shell quoting issues.
     command = (
         python_cmd
         + [
@@ -39,8 +40,9 @@ def run_pyinstaller(
             str(spec_dir),
             "--noconfirm",
         ]
-    )
+        )
 
+    # ``check=True`` raises immediately on packaging failures.
     subprocess.run(command, check=True)
 
 

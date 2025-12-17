@@ -54,6 +54,7 @@ def _configure_matmul_precision(training_config: dict[str, Any]) -> None:
 
     precision_setting = training_config.get("matmul_precision")
     if precision_setting:
+        # Let users opt into faster matmul kernels when their hardware supports it.
         torch.set_float32_matmul_precision(str(precision_setting))
 
 

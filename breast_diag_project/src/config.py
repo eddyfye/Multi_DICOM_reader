@@ -85,6 +85,7 @@ def _validate_required_keys(config: Dict[str, Any]) -> None:
         raise TypeError("Config 'paths' section must be a dictionary")
 
     for key in ["raw_images_dir", "raw_sr_dir", "processed_dir", "manifest_filename"]:
+        # Each path entry must exist to locate inputs/outputs on disk.
         if key not in config["paths"]:
             raise KeyError(f"Config paths missing '{key}'")
 

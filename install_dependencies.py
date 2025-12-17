@@ -18,6 +18,7 @@ def download_dependencies(python_cmd: List[str], requirements_file: Path, downlo
     download_dir.mkdir(parents=True, exist_ok=True)
 
     if any(download_dir.iterdir()):
+        # Skip network calls when cached wheels already exist.
         print(f"Using existing downloaded packages in {download_dir}")
         return
 

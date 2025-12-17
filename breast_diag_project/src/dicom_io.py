@@ -19,6 +19,7 @@ def _sort_paths_by_instance_number(image_paths: List[str]) -> List[Tuple[int, st
         ds = pydicom.dcmread(path, stop_before_pixels=False, force=True)
         instance_number = int(getattr(ds, "InstanceNumber", 0))
         sorted_paths.append((instance_number, path, ds))
+    # Stable sort ensures slices follow acquisition order before stacking.
     sorted_paths.sort(key=lambda x: x[0])
     return sorted_paths
 
