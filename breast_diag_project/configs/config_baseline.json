@@ -15,7 +15,10 @@
       "clip_percentiles": [1, 99],
       "resample_to_isotropic": true,
       "isotropic_method": "median",
-      "resize_shape": [128, 128, 128]
+      "resize_shape": [128, 128, 128],
+      "max_volume_bytes": 134217728,
+      "max_voxels": 134217728,
+      "downsample_on_overflow": true
     },
     "augmentations": {
       "use_randaugment": true,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import random
 from pathlib import Path
@@ -16,6 +17,9 @@ import pytorch_lightning as pl
 
 from breast_diag_project.src import dicom_io, sr_parser
 from breast_diag_project.src.config import ExperimentConfig
+
+
+logger = logging.getLogger(__name__)
 
 
 def _zscore_tensor(tensor: torch.Tensor) -> torch.Tensor:
@@ -83,8 +87,16 @@ def preprocess_volume(
     isotropic_method: str = "median",
     target_spacing_override: Sequence[float] | None = None,
     resize_shape: Sequence[int] | None = None,
+    max_volume_bytes: int | None = None,
+    max_voxels: int | None = None,
+    downsample_on_overflow: bool = True,
+    log_prefix: str | None = None,
 ) -> torch.Tensor:
-    """Standardize a volume using clipping, resampling, and z-score normalization."""
+    """Standardize a volume using clipping, resampling, and z-score normalization.
+
+    Optional `max_volume_bytes` and `max_voxels` caps allow oversized volumes to be
+    downsampled (or rejected) before interpolation.
+    """
 
     vol = volume.astype(np.float32, copy=False)
     if clip_percentiles is not None and len(clip_percentiles) == 2:
@@ -95,6 +107,51 @@ def preprocess_volume(
     if tensor.ndim == 3:
         # Ensure channel dimension exists for downstream interpolation steps.
         tensor = tensor.unsqueeze(0)
+
+    element_size = tensor.element_size()
+
+    def _estimate_bytes(numel: int) -> int:
+        return numel * element_size
+
+    current_voxels = int(torch.numel(tensor))
+    current_bytes = _estimate_bytes(current_voxels)
+    volume_limit = max_volume_bytes if max_volume_bytes is not None else None
+    voxel_limit = max_voxels if max_voxels is not None and max_voxels > 0 else None
+    limit_bytes = volume_limit
+    if voxel_limit is not None:
+        voxels_to_bytes = voxel_limit * element_size
+        limit_bytes = min(limit_bytes, voxels_to_bytes) if limit_bytes is not None else voxels_to_bytes
+
+    if limit_bytes is not None and current_bytes > limit_bytes:
+        if not downsample_on_overflow:
+            raise ValueError(
+                f"Volume exceeds limit ({current_bytes}B > {limit_bytes}B) and downsampling is disabled"
+            )
+
+        scale = (limit_bytes / float(current_bytes)) ** (1.0 / 3.0)
+        _, depth, height, width = tensor.shape
+        new_shape = (
+            max(1, int(math.floor(depth * scale))),
+            max(1, int(math.floor(height * scale))),
+            max(1, int(math.floor(width * scale))),
+        )
+        if new_shape != (depth, height, width):
+            tensor = F.interpolate(
+                tensor.unsqueeze(0), size=new_shape, mode="trilinear", align_corners=False
+            ).squeeze(0)
+            if log_prefix:
+                logger.info(
+                    "%s downsampled volume from %s to %s to respect memory limits",
+                    log_prefix,
+                    (depth, height, width),
+                    new_shape,
+                )
+        current_voxels = int(torch.numel(tensor))
+        current_bytes = _estimate_bytes(current_voxels)
+        if current_bytes > limit_bytes:
+            raise ValueError(
+                f"Volume still exceeds limit after downsampling ({current_bytes}B > {limit_bytes}B)"
+            )
 
     target_spacing = None
     if target_spacing_override is not None and len(target_spacing_override) == 3:
@@ -233,6 +290,13 @@ class BreastDiagnosisDataset(Dataset):
         self.resize_shape: Sequence[int] | None = (
             tuple(int(x) for x in resize_shape) if isinstance(resize_shape, (list, tuple)) else None
         )
+        max_bytes = self.preprocess_cfg.get("max_volume_bytes")
+        self.max_volume_bytes = int(max_bytes) if max_bytes is not None else None
+        max_voxels = self.preprocess_cfg.get("max_voxels")
+        self.max_voxels = int(max_voxels) if max_voxels is not None else None
+        self.downsample_on_overflow = bool(
+            self.preprocess_cfg.get("downsample_on_overflow", True)
+        )
         self.augment_fn = build_randaugment3d(config.data.get("augmentations", {})) if split == "train" else None
         self._pt_cache: Dict[int, Dict[str, Any]] = {}
 
@@ -300,6 +364,13 @@ class BreastDiagnosisDataModule(pl.LightningDataModule):
         self.resize_shape: Sequence[int] | None = (
             tuple(int(x) for x in resize_shape) if isinstance(resize_shape, (list, tuple)) else None
         )
+        max_bytes = self.preprocess_cfg.get("max_volume_bytes")
+        self.max_volume_bytes = int(max_bytes) if max_bytes is not None else None
+        max_voxels = self.preprocess_cfg.get("max_voxels")
+        self.max_voxels = int(max_voxels) if max_voxels is not None else None
+        self.downsample_on_overflow = bool(
+            self.preprocess_cfg.get("downsample_on_overflow", True)
+        )
 
     def setup(self, stage: Optional[str] = None):  # type: ignore[override]
         manifest_path = self.config.manifest_path
@@ -341,14 +412,24 @@ class BreastDiagnosisDataModule(pl.LightningDataModule):
             return pt_dir / filename
 
         pt_paths = []
+        kept_rows: list[pd.Series] = []
         for _, row in df.iterrows():
             pt_path = _build_pt_path(row)
             if not pt_path.exists():
-                example = self._convert_row_to_pt(row)
-                torch.save(example, pt_path)
+                try:
+                    example = self._convert_row_to_pt(row)
+                    torch.save(example, pt_path)
+                except ValueError as err:
+                    logger.warning(
+                        "Skipping study %s due to preprocessing error: %s",
+                        row.get("study_uid", ""),
+                        err,
+                    )
+                    continue
+            kept_rows.append(row)
             pt_paths.append(str(pt_path))
 
-        df = df.copy()
+        df = pd.DataFrame(kept_rows, columns=df.columns).reset_index(drop=True)
         df["pt_path"] = pt_paths
         return df
 
@@ -368,6 +449,10 @@ class BreastDiagnosisDataModule(pl.LightningDataModule):
             self.isotropic_method,
             self.target_spacing_override,
             self.resize_shape,
+            max_volume_bytes=self.max_volume_bytes,
+            max_voxels=self.max_voxels,
+            downsample_on_overflow=self.downsample_on_overflow,
+            log_prefix=f"Study {row.get('study_uid', '')}",
         )
 
         label = sr_parser.parse_sr_to_label(row["sr_path"], self.config.labels)
