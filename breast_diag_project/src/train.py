@@ -10,6 +10,7 @@ import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
+from pytorch_lightning.utilities.rank_zero import rank_zero_info
 
 from breast_diag_project.src.config import ExperimentConfig, load_config
 from breast_diag_project.src.dataset import BreastDiagnosisDataModule
@@ -56,11 +57,31 @@ def _configure_matmul_precision(training_config: dict[str, Any]) -> None:
         torch.set_float32_matmul_precision(str(precision_setting))
 
 
+def _resolve_precision(training_config: dict[str, Any]) -> tuple[str, str]:
+    """Determine precision/AMP settings and emit a rank-zero log message."""
+
+    precision = str(training_config.get("precision", "16-mixed"))
+    training_config["precision"] = precision
+    amp_backend = str(training_config.get("amp_backend", "native"))
+
+    amp_enabled = precision.lower() in {"16", "16-mixed", "bf16", "bf16-mixed"}
+    if amp_enabled:
+        rank_zero_info(f"Training with AMP precision: {precision} (backend={amp_backend})")
+    else:
+        rank_zero_info(
+            "AMP is disabled; set training.precision to '16-mixed' or 'bf16-mixed' "
+            "in the config to enable mixed precision."
+        )
+
+    return precision, amp_backend
+
+
 def run_training(config: ExperimentConfig) -> None:
     data_module = BreastDiagnosisDataModule(config)
     model = create_model(config.model, config.training)
 
     _configure_matmul_precision(config.training)
+    precision, amp_backend = _resolve_precision(config.training)
 
     save_dir = config.output_dir
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -75,7 +96,8 @@ def run_training(config: ExperimentConfig) -> None:
         accelerator=config.trainer.get("accelerator", "auto"),
         devices=config.trainer.get("devices", "auto"),
         max_epochs=int(config.training.get("max_epochs", 1)),
-        precision=config.training.get("precision", "32-true"),
+        precision=precision,
+        amp_backend=amp_backend,
         gradient_clip_val=float(config.training.get("gradient_clip_val", 0.0)),
         log_every_n_steps=int(config.trainer.get("log_every_n_steps", 50)),
         callbacks=[checkpoint_cb],
