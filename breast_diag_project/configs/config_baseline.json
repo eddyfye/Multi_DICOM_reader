@@ -14,7 +14,8 @@
     "preprocessing": {
       "clip_percentiles": [1, 99],
       "resample_to_isotropic": true,
-      "isotropic_method": "median"
+      "isotropic_method": "median",
+      "resize_shape": [128, 128, 128]
     },
     "augmentations": {
       "use_randaugment": true,
@@ -49,6 +50,7 @@
       "optimizer": "adamw",
       "weight_decay": 0.0001,
       "precision": "16-mixed",
+      "amp_backend": "native",
       "gradient_clip_val": 1.0,
       "matmul_precision": "medium"
     },

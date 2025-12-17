@@ -80,6 +80,7 @@ def preprocess_volume(
     resample_isotropic: bool,
     isotropic_method: str = "median",
     target_spacing_override: Sequence[float] | None = None,
+    resize_shape: Sequence[int] | None = None,
 ) -> torch.Tensor:
     """Standardize a volume using clipping, resampling, and z-score normalization."""
 
@@ -99,6 +100,11 @@ def preprocess_volume(
         target_spacing = _compute_isotropic_spacing(spacing, isotropic_method)
 
     tensor = resample_to_spacing(tensor, spacing, target_spacing)
+    if resize_shape is not None and len(resize_shape) == 3:
+        resize_size = tuple(int(max(1, d)) for d in resize_shape)
+        tensor = F.interpolate(
+            tensor.unsqueeze(0), size=resize_size, mode="trilinear", align_corners=False
+        ).squeeze(0)
     tensor = _zscore_tensor(tensor)
     return tensor.float()
 
@@ -220,6 +226,10 @@ class BreastDiagnosisDataset(Dataset):
         self.target_spacing_override: Sequence[float] | None = (
             tuple(target_override) if isinstance(target_override, (list, tuple)) else None
         )
+        resize_shape = self.preprocess_cfg.get("resize_shape")
+        self.resize_shape: Sequence[int] | None = (
+            tuple(int(x) for x in resize_shape) if isinstance(resize_shape, (list, tuple)) else None
+        )
         self.augment_fn = build_randaugment3d(config.data.get("augmentations", {})) if split == "train" else None
         self._pt_cache: Dict[int, Dict[str, Any]] = {}
 
@@ -282,6 +292,10 @@ class BreastDiagnosisDataModule(pl.LightningDataModule):
         target_override = self.preprocess_cfg.get("target_spacing_override")
         self.target_spacing_override: Sequence[float] | None = (
             tuple(target_override) if isinstance(target_override, (list, tuple)) else None
+        )
+        resize_shape = self.preprocess_cfg.get("resize_shape")
+        self.resize_shape: Sequence[int] | None = (
+            tuple(int(x) for x in resize_shape) if isinstance(resize_shape, (list, tuple)) else None
         )
 
     def setup(self, stage: Optional[str] = None):  # type: ignore[override]
@@ -350,6 +364,7 @@ class BreastDiagnosisDataModule(pl.LightningDataModule):
             self.resample_isotropic,
             self.isotropic_method,
             self.target_spacing_override,
+            self.resize_shape,
         )
 
         label = sr_parser.parse_sr_to_label(row["sr_path"], self.config.labels)
