@@ -29,16 +29,24 @@ ImageMeta = Tuple[str, str, str, str]
 
 
 def _collect_image_metadata(images_root: str) -> Dict[Tuple[str, str], List[ImageMeta]]:
-    """Collect metadata for all DICOM images.
+    """Collect metadata for BLISSAUTO DICOM image series.
 
     Returns a mapping keyed by (study_uid, series_uid) to a list of tuples:
     (patient_id, study_uid, series_uid, file_path).
     """
 
     images_map: Dict[Tuple[str, str], List[ImageMeta]] = {}
-    total_files = sum(len(files) for _, _, files in os.walk(images_root))
+    total_files = sum(
+        len(files)
+        for root, _, files in os.walk(images_root)
+        if "BLISSAUTO" in Path(root).name.upper()
+    )
+
     with tqdm(total=total_files, desc="Scanning images", unit="file") as progress:
         for root, _, files in os.walk(images_root):
+            if "BLISSAUTO" not in Path(root).name.upper():
+                continue
+
             for fname in files:
                 fpath = os.path.join(root, fname)
                 try:
@@ -163,35 +171,63 @@ def run(images_root: str, sr_root: str, output_manifest: str) -> None:
 
 
 def choose_blissauto_dir(study_dir: Path) -> Path | None:
-    """Pick BLISSAUTO series directory with the most slices for a study."""
+    """
+    Given an IMAGE study directory:
+        .../<patient>/<study>/
+    find all BLISSAUTO series dirs and select ONLY the one with the MOST
+    DICOM files.
+
+    Steps:
+      - Detect all subdirs where name contains 'BLISSAUTO'
+      - Count *.dcm in each
+      - Log counts
+      - Return the dir with the largest count (ties broken by name)
+
+    If no BLISSAUTO dirs exist, return None.
+    """
 
     candidates = [
-        d for d in study_dir.iterdir() if d.is_dir() and "BLISSAUTO" in d.name.upper()
+        d for d in study_dir.iterdir()
+        if d.is_dir() and "BLISSAUTO" in d.name.upper()
     ]
 
     if not candidates:
         return None
 
-    counts: List[Tuple[Path, int]] = []
-    for directory in candidates:
-        num_dcm = sum(1 for _ in directory.glob("*.dcm"))
-        counts.append((directory, num_dcm))
+    # Count dicom files in each candidate
+    counts = []
+    for d in candidates:
+        num_dcm = sum(1 for _ in d.glob("*.dcm"))
+        counts.append((d, num_dcm))
 
+    # Log for visibility
+    print(f"    [BLISSAUTO] Study: {study_dir.name}")
+    for d, c in counts:
+        print(f"        - {d.name}: {c} DICOM files")
+
+    # Choose the one with the most DICOMs; break ties by directory name
     counts.sort(key=lambda x: (-x[1], x[0].name))
     best_dir, best_count = counts[0]
 
     if best_count == 0:
-        logger.warning(
-            "All BLISSAUTO series under %s contain 0 DICOM files; using first anyway.",
-            study_dir,
-        )
+        print("    [WARN] All BLISSAUTO series have 0 DICOM files; using first anyway.")
 
-    logger.info("[BLISSAUTO] %s -> %s (%d DICOM files)", study_dir.name, best_dir.name, best_count)
+    print(f"    [CHOSEN] {best_dir.name} (DICOM files: {best_count})")
     return best_dir
 
 
 def choose_sr_dir(study_dir: Path) -> Path | None:
-    """Return SR report directory for a study, preferring names containing REPORT."""
+    """
+    Given an SR study directory:
+        .../<patient>/<study>/
+    return the SR report series directory.
+
+    Strategy:
+      - Prefer directory whose name contains 'REPORT'
+        (e.g. '1.000000-Standard Breast Imaging Report-549.1')
+      - Otherwise, if exactly one subdir, use that.
+      - Otherwise, return None (ambiguous).
+    """
 
     series_dirs = [d for d in study_dir.iterdir() if d.is_dir()]
     if not series_dirs:
@@ -199,60 +235,68 @@ def choose_sr_dir(study_dir: Path) -> Path | None:
 
     report_dirs = [d for d in series_dirs if "REPORT" in d.name.upper()]
     if report_dirs:
+        # Prefer explicitly labeled report folders when present.
         return report_dirs[0]
 
     if len(series_dirs) == 1:
+        # Fall back to the sole directory if it's unambiguous.
         return series_dirs[0]
 
-    return None
+    return None  # ambiguous
 
 
 def find_blissauto(img_root: str) -> Dict[Tuple[str, str], Path]:
-    """Locate BLISSAUTO image series, keyed by (patient_id, study_name)."""
+    """
+    Scan IMG_ROOT tree and return:
+        dict[(patient_id, study_name)] -> Path to chosen BLISSAUTO series dir
+    """
 
-    mapping: Dict[Tuple[str, str], Path] = {}
+    mapping = {}
     root = Path(img_root)
 
-    for patient_dir in root.iterdir():
-        if not patient_dir.is_dir():
-            continue
+    patient_dirs = [d for d in root.iterdir() if d.is_dir()]
 
+    for patient_dir in tqdm(patient_dirs, desc="Scanning IMG patients"):
         for study_dir in patient_dir.iterdir():
             if not study_dir.is_dir():
                 continue
 
+            # Pick the BLISSAUTO series with the highest slice count.
             bliss = choose_blissauto_dir(study_dir)
             if bliss is None:
-                logger.warning("No BLISSAUTO series found in %s / %s", patient_dir.name, study_dir.name)
+                print(f"[IMG WARN] No BLISSAUTO in {patient_dir.name} / {study_dir.name}")
                 continue
 
             mapping[(patient_dir.name, study_dir.name)] = bliss
-            logger.info("[IMG] %s / %s -> %s", patient_dir.name, study_dir.name, bliss.name)
+            print(f"[IMG OK] {patient_dir.name} / {study_dir.name} -> {bliss.name}")
 
     return mapping
 
 
 def find_sr(sr_root: str) -> Dict[Tuple[str, str], Path]:
-    """Locate SR series directories keyed by (patient_id, study_name)."""
+    """
+    Scan SR_ROOT tree and return:
+        dict[(patient_id, study_name)] -> Path to SR series dir
+    """
 
-    mapping: Dict[Tuple[str, str], Path] = {}
+    mapping = {}
     root = Path(sr_root)
 
-    for patient_dir in root.iterdir():
-        if not patient_dir.is_dir():
-            continue
+    patient_dirs = [d for d in root.iterdir() if d.is_dir()]
 
+    for patient_dir in tqdm(patient_dirs, desc="Scanning SR patients"):
         for study_dir in patient_dir.iterdir():
             if not study_dir.is_dir():
                 continue
 
+            # Prefer clearly labeled report series; otherwise skip ambiguous cases.
             sr = choose_sr_dir(study_dir)
             if sr is None:
-                logger.warning("No unambiguous SR in %s / %s", patient_dir.name, study_dir.name)
+                print(f"[SR WARN] No unambiguous SR in {patient_dir.name} / {study_dir.name}")
                 continue
 
             mapping[(patient_dir.name, study_dir.name)] = sr
-            logger.info("[SR] %s / %s -> %s", patient_dir.name, study_dir.name, sr.name)
+            print(f"[SR OK] {patient_dir.name} / {study_dir.name} -> {sr.name}")
 
     return mapping
 
