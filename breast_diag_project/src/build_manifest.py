@@ -112,6 +112,10 @@ def run(images_root: str, sr_root: str, output_manifest: str) -> None:
     images_root = os.path.abspath(images_root)
     sr_root = os.path.abspath(sr_root)
     output_manifest = os.path.abspath(output_manifest)
+
+    if Path(output_manifest).exists():
+        logger.info("Manifest already exists at %s; skipping folder scan", output_manifest)
+        return
     logger.info("Scanning image root: %s", images_root)
     images_map = _collect_image_metadata(images_root)
     logger.info("Found %d image series", len(images_map))
