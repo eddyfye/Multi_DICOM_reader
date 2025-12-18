@@ -1,16 +1,16 @@
 {
   "paths": {
-    "raw_images_dir": "data/raw/images",
-    "raw_sr_dir": "data/raw/sr",
-    "processed_dir": "data/processed",
-    "manifest_filename": "manifest.csv",
-    "interim_dir": "data/interim",
-    "output_dir": "outputs/baseline"
+    "manifest_filename": "manifest.csv"
   },
   "data": {
     "cache_images": true,
     "num_workers": 4,
     "train_val_test_split": [0.7, 0.15, 0.15],
+    "dicom_filters": {
+      "image_modality": "MR",
+      "series_description_keyword": "BLISS_AUTO",
+      "sr_modality": "SR"
+    },
     "preprocessing": {
       "clip_percentiles": [1, 99],
       "resample_to_isotropic": true,

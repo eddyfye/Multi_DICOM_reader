@@ -28,31 +28,39 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 ImageMeta = Tuple[str, str, str, str]
 
 
-def _collect_image_metadata(images_root: str) -> Dict[Tuple[str, str], List[ImageMeta]]:
-    """Collect metadata for BLISSAUTO DICOM image series.
+def _collect_image_metadata(
+    images_root: str,
+    *,
+    image_modality: str = "MR",
+    series_description_keyword: str = "BLISS_AUTO",
+) -> Dict[Tuple[str, str], List[ImageMeta]]:
+    """Collect MR BLISS_AUTO DICOM image series using DICOM metadata.
 
     Returns a mapping keyed by (study_uid, series_uid) to a list of tuples:
     (patient_id, study_uid, series_uid, file_path).
     """
 
     images_map: Dict[Tuple[str, str], List[ImageMeta]] = {}
-    total_files = sum(
-        len(files)
-        for root, _, files in os.walk(images_root)
-        if "BLISSAUTO" in Path(root).name.upper()
-    )
+    total_files = sum(len(files) for _, _, files in os.walk(images_root))
 
     with tqdm(total=total_files, desc="Scanning images", unit="file") as progress:
         for root, _, files in os.walk(images_root):
-            if "BLISSAUTO" not in Path(root).name.upper():
-                continue
-
             for fname in files:
                 fpath = os.path.join(root, fname)
                 try:
                     ds = pydicom.dcmread(fpath, stop_before_pixels=True, force=True)
                 except Exception as exc:  # pragma: no cover - logging only
                     logger.warning("Failed to read DICOM image %s: %s", fpath, exc)
+                    progress.update()
+                    continue
+
+                modality = str(getattr(ds, "Modality", "") or "").upper()
+                if modality != image_modality.upper():
+                    progress.update()
+                    continue
+
+                series_description = str(getattr(ds, "SeriesDescription", "") or "").upper()
+                if series_description_keyword.upper() not in series_description:
                     progress.update()
                     continue
 
@@ -70,13 +78,15 @@ def _collect_image_metadata(images_root: str) -> Dict[Tuple[str, str], List[Imag
     return images_map
 
 
-def _collect_sr_metadata(sr_root: str) -> Dict[Tuple[str, str], Tuple[str, str]]:
-    """Collect metadata for DICOM-SR files.
+def _collect_sr_metadata(
+    sr_root: str, *, sr_modality: str = "SR"
+) -> Dict[Tuple[str, str], List[str]]:
+    """Collect metadata for DICOM-SR files using Modality to identify reports.
 
-    Returns mapping from (patient_id, study_uid) to (patient_id, sr_path).
+    Returns mapping from (patient_id, study_uid) to a list of SR file paths.
     """
 
-    sr_map: Dict[Tuple[str, str], Tuple[str, str]] = {}
+    sr_map: Dict[Tuple[str, str], List[str]] = {}
     total_files = sum(len(files) for _, _, files in os.walk(sr_root))
     with tqdm(total=total_files, desc="Scanning SR", unit="file") as progress:
         for root, _, files in os.walk(sr_root):
@@ -89,18 +99,31 @@ def _collect_sr_metadata(sr_root: str) -> Dict[Tuple[str, str], Tuple[str, str]]
                     progress.update()
                     continue
 
+                modality = str(getattr(ds, "Modality", "") or "").upper()
+                if modality != sr_modality.upper():
+                    progress.update()
+                    continue
+
                 patient_id = getattr(ds, "PatientID", None) or ""
                 study_uid = getattr(ds, "StudyInstanceUID", None)
                 if not study_uid:
                     logger.debug("Skipping SR without StudyInstanceUID: %s", fpath)
                     progress.update()
                     continue
-                sr_map[(patient_id, study_uid)] = (patient_id, fpath)
+                sr_map.setdefault((patient_id, study_uid), []).append(fpath)
                 progress.update()
     return sr_map
 
 
-def run(images_root: str, sr_root: str, output_manifest: str) -> None:
+def run(
+    images_root: str,
+    sr_root: str,
+    output_manifest: str,
+    *,
+    image_modality: str = "MR",
+    series_description_keyword: str = "BLISS_AUTO",
+    sr_modality: str = "SR",
+) -> None:
     """Build a manifest CSV aligning DICOM image series with SR files.
 
     Args:
@@ -118,12 +141,17 @@ def run(images_root: str, sr_root: str, output_manifest: str) -> None:
         return
 
     logger.info("Scanning image root: %s", images_root)
-    images_map = _collect_image_metadata(images_root)
+    images_map = _collect_image_metadata(
+        images_root,
+        image_modality=image_modality,
+        series_description_keyword=series_description_keyword,
+    )
     logger.info("Found %d image series", len(images_map))
 
     logger.info("Scanning SR root: %s", sr_root)
-    sr_map = _collect_sr_metadata(sr_root)
-    logger.info("Found %d SR files", len(sr_map))
+    sr_map = _collect_sr_metadata(sr_root, sr_modality=sr_modality)
+    total_sr_files = sum(len(paths) for paths in sr_map.values())
+    logger.info("Found %d SR files across %d studies", total_sr_files, len(sr_map))
 
     rows = []
     for (study_uid, series_uid), meta_list in images_map.items():
@@ -131,7 +159,12 @@ def run(images_root: str, sr_root: str, output_manifest: str) -> None:
         patient_id = next(iter(patient_ids), "")
 
         sr_key = (patient_id or "", study_uid)
-        if sr_key not in sr_map:
+        sr_candidates = sr_map.get(sr_key)
+        if not sr_candidates and not patient_id:
+            # Try matching by study when patient ID is missing in the image metadata.
+            sr_candidates = sr_map.get(("", study_uid))
+
+        if not sr_candidates:
             # Skip image series that lack a corresponding SR report.
             logger.warning(
                 "No SR found for patient %s study %s; skipping series %s",
@@ -141,7 +174,9 @@ def run(images_root: str, sr_root: str, output_manifest: str) -> None:
             )
             continue
 
-        sr_patient_id, sr_path = sr_map[sr_key]
+        sr_path = sorted(sr_candidates)[0]
+        sr_patient_id = getattr(pydicom.dcmread(sr_path, stop_before_pixels=True, force=True), "PatientID", None)
+
         if patient_id and sr_patient_id and patient_id != sr_patient_id:
             logger.warning(
                 "Patient ID mismatch for study %s (images: %s, SR: %s); using SR value",
@@ -428,29 +463,31 @@ def aggregate_exam_label(sr_files: Iterable[Path]) -> int | None:
     return max(categories)
 
 
-def save_exam_pt(patient_id: str, study_name: str, bliss_dir: Path, sr_dir: Path, out_root: Path) -> bool:
+def save_exam_pt(
+    patient_id: str, study_uid: str, image_files: Iterable[Path], sr_files: Iterable[Path], out_root: Path
+) -> bool:
     """Create interim PyTorch tensor for an exam paired with SR label."""
 
-    image_files = list(bliss_dir.glob("*.dcm"))
-    sr_files = list(sr_dir.glob("*.dcm"))
+    image_files = list(image_files)
+    sr_files = list(sr_files)
 
-    logger.info("[PAIR] %s / %s | images=%d, sr=%d", patient_id, study_name, len(image_files), len(sr_files))
+    logger.info("[PAIR] %s / %s | images=%d, sr=%d", patient_id, study_uid, len(image_files), len(sr_files))
 
     if not image_files:
-        logger.warning("No image DICOMs found for %s / %s", patient_id, study_name)
+        logger.warning("No image DICOMs found for %s / %s", patient_id, study_uid)
         return False
     if not sr_files:
-        logger.warning("No SR DICOMs found for %s / %s", patient_id, study_name)
+        logger.warning("No SR DICOMs found for %s / %s", patient_id, study_uid)
         return False
 
     volume = load_image_volume(image_files)
     if volume is None:
-        logger.warning("Could not build image volume for %s / %s", patient_id, study_name)
+        logger.warning("Could not build image volume for %s / %s", patient_id, study_uid)
         return False
 
     label_int = aggregate_exam_label(sr_files)
     if label_int is None:
-        logger.warning("No valid assessment category found for %s / %s", patient_id, study_name)
+        logger.warning("No valid assessment category found for %s / %s", patient_id, study_uid)
         return False
 
     image_tensor = torch.from_numpy(volume).unsqueeze(0).float()
@@ -460,10 +497,10 @@ def save_exam_pt(patient_id: str, study_name: str, bliss_dir: Path, sr_dir: Path
         "image": image_tensor,
         "label": label_tensor,
         "patient_id": patient_id,
-        "study_name": study_name,
+        "study_name": study_uid,
     }
 
-    safe_study = study_name.replace(" ", "_").replace(".", "-")
+    safe_study = study_uid.replace(" ", "_").replace(".", "-")
     out_path = out_root / f"{patient_id}__{safe_study}.pt"
     torch.save(data, out_path)
 
@@ -476,38 +513,65 @@ def save_exam_pt(patient_id: str, study_name: str, bliss_dir: Path, sr_dir: Path
     return True
 
 
-def build_pt_dataset(img_root: str, sr_root: str, out_root: str) -> None:
-    """Scan BLISSAUTO images and SR reports to build interim PT tensors."""
+def build_pt_dataset(
+    img_root: str,
+    sr_root: str,
+    out_root: str,
+    *,
+    image_modality: str = "MR",
+    series_description_keyword: str = "BLISS_AUTO",
+    sr_modality: str = "SR",
+) -> None:
+    """Scan BLISS_AUTO MR images and SR reports to build interim PT tensors."""
 
-    logger.info("Scanning for BLISSAUTO image series under %s", img_root)
-    bliss_map = find_blissauto(img_root)
+    logger.info(
+        "Scanning DICOM files under %s for %s series with %s in SeriesDescription",
+        img_root,
+        image_modality,
+        series_description_keyword,
+    )
+    images_map = _collect_image_metadata(
+        img_root,
+        image_modality=image_modality,
+        series_description_keyword=series_description_keyword,
+    )
 
-    logger.info("Scanning for SR report series under %s", sr_root)
-    sr_map = find_sr(sr_root)
-
-    common_pairs = set(bliss_map.keys()) & set(sr_map.keys())
-
-    logger.info("Matched %d IMG+SR study pairs", len(common_pairs))
+    logger.info(
+        "Scanning DICOM files under %s for %s reports", sr_root, sr_modality
+    )
+    sr_map = _collect_sr_metadata(sr_root, sr_modality=sr_modality)
 
     out_root_path = Path(out_root)
     out_root_path.mkdir(parents=True, exist_ok=True)
 
     num_saved = 0
-    for patient, study in tqdm(
-        sorted(common_pairs), desc="Building PT dataset", unit="exam"
+    unmatched_images: List[Tuple[str, str]] = []
+    for (study_uid, series_uid), meta_list in tqdm(
+        sorted(images_map.items()), desc="Building PT dataset", unit="exam"
     ):
-        bliss_dir = bliss_map[(patient, study)]
-        sr_dir = sr_map[(patient, study)]
+        patient_ids = {m[0] for m in meta_list if m[0]}
+        patient_id = next(iter(patient_ids), "")
 
-        if save_exam_pt(patient, study, bliss_dir, sr_dir, out_root_path):
+        sr_key = (patient_id or "", study_uid)
+        sr_candidates = sr_map.get(sr_key)
+        if not sr_candidates and not patient_id:
+            sr_candidates = sr_map.get(("", study_uid))
+
+        if not sr_candidates:
+            unmatched_images.append((patient_id or "<missing>", study_uid))
+            continue
+
+        image_files = [Path(m[3]) for m in sorted(meta_list, key=lambda x: x[3])]
+        sr_files = [Path(p) for p in sorted(sr_candidates)]
+
+        if save_exam_pt(patient_id or "", study_uid, image_files, sr_files, out_root_path):
             num_saved += 1
 
-    incomplete_patients = (
-        {p for (p, _) in bliss_map.keys()} | {p for (p, _) in sr_map.keys()}
-    ) - {p for (p, _) in common_pairs}
-
-    if incomplete_patients:
-        logger.warning("Skipped patients missing either IMG or SR: %s", ", ".join(sorted(incomplete_patients)))
+    if unmatched_images:
+        logger.warning(
+            "Skipped studies without SR matches: %s",
+            "; ".join([f"{p} / {s}" for p, s in unmatched_images]),
+        )
 
     logger.info("Finished. Total exams saved: %d | Output: %s", num_saved, out_root_path)
 
@@ -522,14 +586,45 @@ def _parse_args() -> argparse.Namespace:
     manifest_parser.add_argument("--images-root", required=True, help="Root directory containing DICOM images")
     manifest_parser.add_argument("--sr-root", required=True, help="Root directory containing DICOM SR files")
     manifest_parser.add_argument("--output", required=True, help="Output CSV manifest path")
+    manifest_parser.add_argument(
+        "--image-modality",
+        default="MR",
+        help="Modality tag value used to identify image series (default: MR)",
+    )
+    manifest_parser.add_argument(
+        "--series-description-keyword",
+        default="BLISS_AUTO",
+        help="Keyword to search for in SeriesDescription when selecting image series",
+    )
+    manifest_parser.add_argument(
+        "--sr-modality",
+        default="SR",
+        help="Modality tag value used to identify structured reports (default: SR)",
+    )
 
     tensors_parser = subparsers.add_parser(
-        "tensors", help="Create interim PyTorch tensors from BLISSAUTO images and SR reports"
+        "tensors",
+        help="Create interim PyTorch tensors from BLISS_AUTO MR images and SR reports",
     )
-    tensors_parser.add_argument("--images-root", required=True, help="Root directory containing BLISSAUTO DICOM images")
+    tensors_parser.add_argument("--images-root", required=True, help="Root directory containing BLISS_AUTO MR DICOM images")
     tensors_parser.add_argument("--sr-root", required=True, help="Root directory containing SR DICOM files")
     tensors_parser.add_argument(
         "--output-dir", required=True, help="Directory to store generated .pt files"
+    )
+    tensors_parser.add_argument(
+        "--image-modality",
+        default="MR",
+        help="Modality tag value used to identify image series (default: MR)",
+    )
+    tensors_parser.add_argument(
+        "--series-description-keyword",
+        default="BLISS_AUTO",
+        help="Keyword to search for in SeriesDescription when selecting image series",
+    )
+    tensors_parser.add_argument(
+        "--sr-modality",
+        default="SR",
+        help="Modality tag value used to identify structured reports (default: SR)",
     )
 
     return parser.parse_args()
@@ -538,9 +633,23 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     if args.command == "manifest":
-        run(args.images_root, args.sr_root, args.output)
+        run(
+            args.images_root,
+            args.sr_root,
+            args.output,
+            image_modality=args.image_modality,
+            series_description_keyword=args.series_description_keyword,
+            sr_modality=args.sr_modality,
+        )
     else:
-        build_pt_dataset(args.images_root, args.sr_root, args.output_dir)
+        build_pt_dataset(
+            args.images_root,
+            args.sr_root,
+            args.output_dir,
+            image_modality=args.image_modality,
+            series_description_keyword=args.series_description_keyword,
+            sr_modality=args.sr_modality,
+        )
 
 
 if __name__ == "__main__":
