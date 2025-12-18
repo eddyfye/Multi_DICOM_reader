@@ -85,9 +85,11 @@ def run_training(config: ExperimentConfig) -> None:
 
     save_dir = config.output_dir
     save_dir.mkdir(parents=True, exist_ok=True)
+    monitor_metric = config.output.get("checkpoint_monitor", "val_loss")
+    rank_zero_info("Using checkpoint monitor metric: %s", monitor_metric)
     checkpoint_cb = ModelCheckpoint(
         dirpath=save_dir,
-        monitor=config.output.get("checkpoint_monitor", "val_loss"),
+        monitor=monitor_metric,
         save_top_k=1,
         mode="min",
     )

@@ -274,7 +274,6 @@ class BreastDiagnosisDataset(Dataset):
         self.manifest_df = manifest_df.reset_index(drop=True)
         self.split = split
         self.config = config
-        self.label_config = config.labels
         self.cache_images = bool(config.data.get("cache_images", False))
         self.preprocess_cfg = config.data.get("preprocessing", {})
         self.clip_percentiles: Sequence[float] | None = tuple(
@@ -455,7 +454,7 @@ class BreastDiagnosisDataModule(pl.LightningDataModule):
             log_prefix=f"Study {row.get('study_uid', '')}",
         )
 
-        label = sr_parser.parse_sr_to_label(row["sr_path"], self.config.labels)
+        label = sr_parser.parse_sr_to_label(row["sr_path"])
         label_tensor = torch.tensor(float(label.get("target", 0.0)), dtype=torch.float32)
 
         return {

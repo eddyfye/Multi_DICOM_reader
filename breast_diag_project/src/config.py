@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict
 
-REQUIRED_TOP_LEVEL_KEYS = {"paths", "data", "labels", "model", "training", "trainer", "output"}
+REQUIRED_TOP_LEVEL_KEYS = {"paths", "data", "model", "training", "trainer", "output"}
 
 
 @dataclass
@@ -26,10 +26,6 @@ class ExperimentConfig:
     @property
     def data(self) -> Dict[str, Any]:
         return self.raw["data"]
-
-    @property
-    def labels(self) -> Dict[str, Any]:
-        return self.raw["labels"]
 
     @property
     def model(self) -> Dict[str, Any]:
