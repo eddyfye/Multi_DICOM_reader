@@ -17,6 +17,7 @@ class ExperimentConfig:
     input_dir: Path
     preproc_result_dir: Path
     output_dir_path: Path
+    project_name: str
 
     @property
     def paths(self) -> Dict[str, Any]:
@@ -45,6 +46,10 @@ class ExperimentConfig:
     @property
     def output(self) -> Dict[str, Any]:
         return self.raw["output"]
+
+    @property
+    def project(self) -> str:
+        return self.project_name
 
     @property
     def manifest_path(self) -> Path:
@@ -103,9 +108,12 @@ def _validate_required_keys(config: Dict[str, Any]) -> None:
     if not isinstance(config.get("data"), dict):
         raise KeyError("Config data section must include 'data' dictionary")
 
+    if not isinstance(config.get("output"), dict):
+        raise TypeError("Config 'output' section must be a dictionary")
+
 
 def load_config(
-    path: str, input_dir: str, preproc_result_dir: str, output_dir: str
+    path: str, input_dir: str, preproc_result_dir: str, output_dir: str | None
 ) -> ExperimentConfig:
     """Load and validate an experiment configuration JSON file."""
 
@@ -117,11 +125,20 @@ def load_config(
         config = json.load(f)
 
     _validate_required_keys(config)
+
+    output_config = config.setdefault("output", {})
+    project_name = str(output_config.get("project_name", "breast_diag_experiment"))
+    output_config["project_name"] = project_name
+    output_config.setdefault("experiment_name", project_name)
+
+    base_output_dir = Path(output_dir) if output_dir else Path("outputs")
+    resolved_output_dir = base_output_dir / project_name
     return ExperimentConfig(
         raw=config,
         input_dir=Path(input_dir),
         preproc_result_dir=Path(preproc_result_dir),
-        output_dir_path=Path(output_dir),
+        output_dir_path=resolved_output_dir,
+        project_name=project_name,
     )
 
 

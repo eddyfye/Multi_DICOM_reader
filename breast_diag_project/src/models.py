@@ -5,8 +5,32 @@ from typing import Any, Dict, List
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import pytorch_lightning as pl
+
+
+def _build_loss_fn(training_config: Dict[str, Any], num_classes: int) -> nn.Module:
+    """Create a loss function from configuration with sensible defaults."""
+
+    loss_name = str(training_config.get("loss", "cross_entropy")).lower()
+
+    if loss_name in {"ce", "cross_entropy", "crossentropyloss"}:
+        if num_classes == 1:
+            raise ValueError(
+                "CrossEntropyLoss requires num_classes > 1. Use training.loss='bce' for binary logits."
+            )
+        return nn.CrossEntropyLoss()
+    if loss_name in {"bce", "bcewithlogits", "binary_cross_entropy", "bcewithlogitsloss"}:
+        return nn.BCEWithLogitsLoss()
+    if loss_name in {"mse", "l2", "mean_squared_error", "mseloss"}:
+        return nn.MSELoss()
+    if loss_name in {"l1", "mae", "l1loss", "mean_absolute_error"}:
+        return nn.L1Loss()
+    if loss_name in {"smooth_l1", "smoothl1", "huber", "huberloss"}:
+        return nn.SmoothL1Loss()
+
+    raise ValueError(
+        f"Unsupported loss '{loss_name}'. Choose from ce, bce, mse, l1, or smooth_l1."
+    )
 
 
 class Simple3DCNN(pl.LightningModule):
@@ -21,6 +45,7 @@ class Simple3DCNN(pl.LightningModule):
         self.num_classes = int(model_config.get("num_classes", 1))
         features: List[int] = list(model_config.get("features", [32, 64, 128]))
         dropout = float(model_config.get("dropout", 0.0))
+        self.loss_fn = _build_loss_fn(training_config, self.num_classes)
 
         layers: List[nn.Module] = []
         current_channels = in_channels
@@ -47,9 +72,9 @@ class Simple3DCNN(pl.LightningModule):
         return logits
 
     def _compute_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        if self.num_classes == 1:
-            return F.binary_cross_entropy_with_logits(logits, targets)
-        return F.cross_entropy(logits, targets.long())
+        if isinstance(self.loss_fn, nn.CrossEntropyLoss):
+            return self.loss_fn(logits, targets.long())
+        return self.loss_fn(logits, targets)
 
     def training_step(self, batch, batch_idx: int):  # type: ignore[override]
         images, targets = batch
@@ -122,6 +147,7 @@ class ResNet3D(pl.LightningModule):
         self.layers_config: List[int] = list(model_config.get("layers", [2, 2, 2, 2]))
         self.base_channels = int(model_config.get("base_channels", 64))
         dropout = float(model_config.get("dropout", 0.0))
+        self.loss_fn = _build_loss_fn(training_config, self.num_classes)
 
         self.inplanes = self.base_channels
         self.conv1 = nn.Conv3d(
@@ -174,9 +200,9 @@ class ResNet3D(pl.LightningModule):
         return logits
 
     def _compute_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        if self.num_classes == 1:
-            return F.binary_cross_entropy_with_logits(logits, targets)
-        return F.cross_entropy(logits, targets.long())
+        if isinstance(self.loss_fn, nn.CrossEntropyLoss):
+            return self.loss_fn(logits, targets.long())
+        return self.loss_fn(logits, targets)
 
     def training_step(self, batch, batch_idx: int):  # type: ignore[override]
         images, targets = batch
