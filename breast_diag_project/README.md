@@ -61,7 +61,7 @@ Train a model using a configuration file:
 
 ```bash
 python -m breast_diag_project.src.run_experiment \
-  --config breast_diag_project/configs/config_baseline.json \
+  --configdir breast_diag_project/configs \
   --inputdir /path/to/data/raw \
   --preprocresultdir /tmp/breast_manifest_and_cache \
   --outputdir /tmp/breast_runs/exp1

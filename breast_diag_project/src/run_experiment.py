@@ -9,12 +9,13 @@ from breast_diag_project.src.config import load_config
 
 
 def run_experiment(
-    config_path: str,
+    config_dir: str,
     input_dir: str,
     preproc_result_dir: str,
     output_dir: str,
     build_manifest_flag: bool = False,
 ) -> None:
+    config_path = Path(config_dir) / "config.json"
     config = load_config(config_path, input_dir, preproc_result_dir, output_dir)
 
     images_root = config.raw_images_dir
@@ -42,11 +43,18 @@ def run_experiment(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run full experiment")
-    parser.add_argument("--config", required=True, help="Path to experiment config JSON")
+    parser.add_argument(
+        "--configdir",
+        required=True,
+        help="Directory containing the experiment configuration JSON (config.json)",
+    )
     parser.add_argument(
         "--inputdir",
         required=True,
-        help="Root directory containing raw image and SR data (expects 'images' and 'sr' subdirs)",
+        help=(
+            "Root directory containing raw DICOM data; image and SR series are inferred "
+            "from metadata rather than fixed subdirectories"
+        ),
     )
     parser.add_argument(
         "--preprocresultdir",
@@ -65,7 +73,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     run_experiment(
-        args.config,
+        args.configdir,
         input_dir=args.inputdir,
         preproc_result_dir=args.preprocresultdir,
         output_dir=args.outputdir,
