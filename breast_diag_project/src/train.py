@@ -110,12 +110,27 @@ def run_training(config: ExperimentConfig) -> None:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train breast diagnosis model")
     parser.add_argument("--config", required=True, help="Path to experiment config JSON")
+    parser.add_argument(
+        "--preprocresultdir",
+        required=True,
+        help="Directory containing interim preprocessing results and manifest",
+    )
+    parser.add_argument(
+        "--outputdir",
+        required=True,
+        help="Directory to store training outputs (checkpoints, logs, metrics)",
+    )
+    parser.add_argument(
+        "--inputdir",
+        required=True,
+        help="Root directory containing raw image and SR data (expects 'images' and 'sr' subdirs)",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
-    config = load_config(args.config)
+    config = load_config(args.config, args.inputdir, args.preprocresultdir, args.outputdir)
     run_training(config)
 
 

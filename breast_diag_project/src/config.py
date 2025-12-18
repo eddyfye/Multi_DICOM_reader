@@ -14,6 +14,9 @@ class ExperimentConfig:
     """Container for experiment configuration."""
 
     raw: Dict[str, Any]
+    input_dir: Path
+    preproc_result_dir: Path
+    output_dir_path: Path
 
     @property
     def paths(self) -> Dict[str, Any]:
@@ -49,31 +52,41 @@ class ExperimentConfig:
 
     @property
     def raw_images_dir(self) -> Path:
-        return Path(self.paths["raw_images_dir"])
+        images_subdir = self.paths.get("raw_images_subdir", "images")
+        return self.input_dir / images_subdir
 
     @property
     def raw_sr_dir(self) -> Path:
-        return Path(self.paths["raw_sr_dir"])
-
-    @property
-    def processed_dir(self) -> Path:
-        return Path(self.paths["processed_dir"])
+        sr_subdir = self.paths.get("raw_sr_subdir", "sr")
+        return self.input_dir / sr_subdir
 
     @property
     def interim_dir(self) -> Path:
-        if "interim_dir" in self.paths:
-            return Path(self.paths["interim_dir"])
-        return self.processed_dir.parent / "interim"
+        return self.preproc_result_dir
 
     @property
     def output_dir(self) -> Path:
-        if "output_dir" in self.paths:
-            return Path(self.paths["output_dir"])
-        return Path(self.output.get("save_dir", "outputs"))
+        return self.output_dir_path
 
     @property
     def manifest_filename(self) -> str:
         return str(self.paths["manifest_filename"])
+
+    @property
+    def dicom_filters(self) -> Dict[str, Any]:
+        return self.data.get("dicom_filters", {})
+
+    @property
+    def image_modality(self) -> str:
+        return str(self.dicom_filters.get("image_modality", "MR"))
+
+    @property
+    def series_description_keyword(self) -> str:
+        return str(self.dicom_filters.get("series_description_keyword", "BLISS_AUTO"))
+
+    @property
+    def sr_modality(self) -> str:
+        return str(self.dicom_filters.get("sr_modality", "SR"))
 
 
 def _validate_required_keys(config: Dict[str, Any]) -> None:
@@ -84,16 +97,16 @@ def _validate_required_keys(config: Dict[str, Any]) -> None:
     if not isinstance(config.get("paths"), dict):
         raise TypeError("Config 'paths' section must be a dictionary")
 
-    for key in ["raw_images_dir", "raw_sr_dir", "processed_dir", "manifest_filename"]:
-        # Each path entry must exist to locate inputs/outputs on disk.
-        if key not in config["paths"]:
-            raise KeyError(f"Config paths missing '{key}'")
+    if "manifest_filename" not in config["paths"]:
+        raise KeyError("Config paths must include 'manifest_filename'")
 
     if not isinstance(config.get("data"), dict):
         raise KeyError("Config data section must include 'data' dictionary")
 
 
-def load_config(path: str) -> ExperimentConfig:
+def load_config(
+    path: str, input_dir: str, preproc_result_dir: str, output_dir: str
+) -> ExperimentConfig:
     """Load and validate an experiment configuration JSON file."""
 
     config_path = Path(path)
@@ -104,7 +117,12 @@ def load_config(path: str) -> ExperimentConfig:
         config = json.load(f)
 
     _validate_required_keys(config)
-    return ExperimentConfig(raw=config)
+    return ExperimentConfig(
+        raw=config,
+        input_dir=Path(input_dir),
+        preproc_result_dir=Path(preproc_result_dir),
+        output_dir_path=Path(output_dir),
+    )
 
 
 __all__ = ["ExperimentConfig", "load_config"]

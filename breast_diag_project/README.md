@@ -47,19 +47,25 @@ Build a manifest CSV mapping image series to SR reports:
 
 ```bash
 python -m breast_diag_project.src.build_manifest \
-  --images_root /path/to/image/tree \
-  --sr_root /path/to/sr/tree \
-  --output_manifest /tmp/breast_manifest.csv
+  --images-root /path/to/image/tree \
+  --sr-root /path/to/sr/tree \
+  --output /tmp/breast_manifest.csv
 ```
+
+By default the manifest builder looks for image series whose `Modality` equals
+`MR` and whose `SeriesDescription` contains `BLISS_AUTO`, and pairs them with SR
+files whose `Modality` equals `SR`. You can override these keywords either via
+CLI flags or by setting `data.dicom_filters` in the experiment config.
 
 Train a model using a configuration file:
 
 ```bash
 python -m breast_diag_project.src.run_experiment \
-  --config breast_diag_project/configs/default.yaml \
-  --manifest /tmp/breast_manifest.csv \
-  --output-dir /tmp/breast_runs/exp1
+  --config breast_diag_project/configs/config_baseline.json \
+  --inputdir /path/to/data/raw \
+  --preprocresultdir /tmp/breast_manifest_and_cache \
+  --outputdir /tmp/breast_runs/exp1
 ```
 
-The runner saves checkpoints, metrics, and logs to the specified `output-dir` so
+The runner saves checkpoints, metrics, and logs to the specified `outputdir` so
 you can track experiment results across runs.
