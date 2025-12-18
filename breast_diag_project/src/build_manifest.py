@@ -116,6 +116,7 @@ def run(images_root: str, sr_root: str, output_manifest: str) -> None:
     if Path(output_manifest).exists():
         logger.info("Manifest already exists at %s; skipping folder scan", output_manifest)
         return
+
     logger.info("Scanning image root: %s", images_root)
     images_map = _collect_image_metadata(images_root)
     logger.info("Found %d image series", len(images_map))
@@ -160,7 +161,6 @@ def run(images_root: str, sr_root: str, output_manifest: str) -> None:
                 "series_uid": series_uid,
                 "image_paths": json.dumps(image_paths),
                 "sr_path": sr_path,
-                "label_json": "{}",
             }
         )
 
