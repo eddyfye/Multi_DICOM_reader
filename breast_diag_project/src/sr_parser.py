@@ -74,7 +74,7 @@ def _extract_assessment_category_from_sr(sr_path: str) -> Tuple[Optional[int], O
     return category_int, raw_value, meaning
 
 
-def parse_sr_to_label(sr_path: str, label_config: Dict[str, Any]) -> Dict[str, Any]:
+def parse_sr_to_label(sr_path: str) -> Dict[str, Any]:
     """Parse a DICOM SR file and return training-ready labels using assessment category."""
 
     category_int, raw_value, meaning = _extract_assessment_category_from_sr(sr_path)
