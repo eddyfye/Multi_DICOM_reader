@@ -498,10 +498,25 @@ def save_exam_pt(
         "label": label_tensor,
         "patient_id": patient_id,
         "study_name": study_uid,
+        "resized_shape": tuple(int(dim) for dim in image_tensor.shape[-3:]),
     }
 
     safe_study = study_uid.replace(" ", "_").replace(".", "-")
     out_path = out_root / f"{patient_id}__{safe_study}.pt"
+
+    if out_path.exists():
+        logger.info("Found existing PT file %s; reusing without regeneration", out_path.name)
+        try:
+            existing = torch.load(out_path, map_location="cpu")
+            if "resized_shape" not in existing and "image" in existing:
+                existing["resized_shape"] = tuple(int(dim) for dim in existing["image"].shape[-3:])
+                torch.save(existing, out_path)
+            return True
+        except Exception as err:
+            logger.warning(
+                "Existing PT file %s could not be loaded (%s); rebuilding", out_path, err
+            )
+
     torch.save(data, out_path)
 
     logger.info(

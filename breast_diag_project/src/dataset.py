@@ -414,17 +414,35 @@ class BreastDiagnosisDataModule(pl.LightningDataModule):
         kept_rows: list[pd.Series] = []
         for _, row in df.iterrows():
             pt_path = _build_pt_path(row)
-            if not pt_path.exists():
+            if pt_path.exists():
                 try:
-                    example = self._convert_row_to_pt(row)
-                    torch.save(example, pt_path)
-                except ValueError as err:
+                    data = torch.load(pt_path, map_location="cpu")
+                    if "resized_shape" not in data and "image" in data:
+                        image_tensor = data["image"]
+                        data["resized_shape"] = tuple(int(dim) for dim in image_tensor.shape[-3:])
+                        torch.save(data, pt_path)
+                except Exception as err:
                     logger.warning(
-                        "Skipping study %s due to preprocessing error: %s",
-                        row.get("study_uid", ""),
+                        "Failed to load existing PT example %s, rebuilding: %s",
+                        pt_path,
                         err,
                     )
+                else:
+                    kept_rows.append(row)
+                    pt_paths.append(str(pt_path))
                     continue
+
+            try:
+                example = self._convert_row_to_pt(row)
+                torch.save(example, pt_path)
+            except ValueError as err:
+                logger.warning(
+                    "Skipping study %s due to preprocessing error: %s",
+                    row.get("study_uid", ""),
+                    err,
+                )
+                continue
+
             kept_rows.append(row)
             pt_paths.append(str(pt_path))
 
@@ -453,6 +471,7 @@ class BreastDiagnosisDataModule(pl.LightningDataModule):
             downsample_on_overflow=self.downsample_on_overflow,
             log_prefix=f"Study {row.get('study_uid', '')}",
         )
+        resized_shape = tuple(int(dim) for dim in image_tensor.shape[-3:])
 
         label = sr_parser.parse_sr_to_label(row["sr_path"])
         label_tensor = torch.tensor(float(label.get("target", 0.0)), dtype=torch.float32)
@@ -466,6 +485,7 @@ class BreastDiagnosisDataModule(pl.LightningDataModule):
             "image_paths": image_paths,
             "label_fields": label,
             "spacing": spacing,
+            "resized_shape": resized_shape,
         }
 
     def train_dataloader(self) -> DataLoader:  # type: ignore[override]
