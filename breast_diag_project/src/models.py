@@ -74,6 +74,13 @@ class Simple3DCNN(pl.LightningModule):
     def _compute_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         if isinstance(self.loss_fn, nn.CrossEntropyLoss):
             return self.loss_fn(logits, targets.long())
+        if isinstance(self.loss_fn, nn.BCEWithLogitsLoss):
+            return self.loss_fn(logits, targets.float())
+        if isinstance(
+            self.loss_fn,
+            (nn.MSELoss, nn.L1Loss, nn.SmoothL1Loss),
+        ):
+            return self.loss_fn(logits, targets.float())
         return self.loss_fn(logits, targets)
 
     def training_step(self, batch, batch_idx: int):  # type: ignore[override]
@@ -202,6 +209,13 @@ class ResNet3D(pl.LightningModule):
     def _compute_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         if isinstance(self.loss_fn, nn.CrossEntropyLoss):
             return self.loss_fn(logits, targets.long())
+        if isinstance(self.loss_fn, nn.BCEWithLogitsLoss):
+            return self.loss_fn(logits, targets.float())
+        if isinstance(
+            self.loss_fn,
+            (nn.MSELoss, nn.L1Loss, nn.SmoothL1Loss),
+        ):
+            return self.loss_fn(logits, targets.float())
         return self.loss_fn(logits, targets)
 
     def training_step(self, batch, batch_idx: int):  # type: ignore[override]
