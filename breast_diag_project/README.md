@@ -69,3 +69,42 @@ python -m breast_diag_project.src.run_experiment \
 
 The runner saves checkpoints, metrics, and logs to the specified `outputdir` so
 you can track experiment results across runs.
+
+## Hyperparameter tuning
+
+Use the Optuna-backed tuner to launch multiple training trials and explore
+hyperparameters:
+
+```bash
+python -m breast_diag_project.src.tune \
+  --configdir breast_diag_project/configs \
+  --inputdir /path/to/data/raw \
+  --preprocresultdir /tmp/breast_manifest_and_cache \
+  --outputdir /tmp/breast_tuning_runs
+```
+
+Add a `tuning` block to your experiment config to control the search. Example:
+
+```json
+{
+  "tuning": {
+    "n_trials": 20,
+    "study_name": "breast_diag_study",
+    "direction": "minimize",
+    "storage": "sqlite:///tmp/breast_diag_study.db",
+    "prune": true,
+    "search_space": {
+      "learning_rate": { "type": "float", "low": 0.0001, "high": 0.005, "log": true },
+      "weight_decay": { "type": "float", "low": 0.000001, "high": 0.01, "log": true },
+      "batch_size": { "type": "categorical", "choices": [1, 2, 4] },
+      "dropout": { "type": "float", "low": 0.0, "high": 0.5 }
+    }
+  }
+}
+```
+
+Study results are stored in the Optuna storage backend if you set `tuning.storage`
+(for example, a SQLite URL). If `storage` is omitted, Optuna keeps the study in
+memory for the duration of the run. Trial artifacts (checkpoints, logs, and
+metrics) are written under the `outputdir` you pass to the CLI, organized into
+`trial_<n>` subfolders.
