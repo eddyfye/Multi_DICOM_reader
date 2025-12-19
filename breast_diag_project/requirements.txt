@@ -3,3 +3,4 @@ pandas
 numpy
 torch
 pytorch-lightning>=2.0.0
+optuna
