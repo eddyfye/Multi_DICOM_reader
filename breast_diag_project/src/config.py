@@ -89,6 +89,10 @@ class ExperimentConfig:
     def sr_modality(self) -> str:
         return str(self.dicom_filters.get("sr_modality", "SR"))
 
+    @property
+    def sr_labels_keyword(self) -> str:
+        return str(self.dicom_filters.get("sr_labels_keyword", "assessment category"))
+
 
 def _validate_required_keys(config: Dict[str, Any]) -> None:
     missing = REQUIRED_TOP_LEVEL_KEYS - config.keys()

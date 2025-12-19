@@ -16,10 +16,12 @@ def _get_concept_name(item) -> Optional[str]:
     return name
 
 
-def _find_assessment_category(items) -> Optional[Tuple[Any, Any]]:
+def _find_assessment_category(
+    items, keyword: str
+) -> Optional[Tuple[Any, Any]]:
     for item in items:
         concept_name = _get_concept_name(item)
-        if concept_name and "assessment category" in concept_name.lower():
+        if concept_name and keyword in concept_name.lower():
             raw_value = None
             meaning = None
 
@@ -35,13 +37,16 @@ def _find_assessment_category(items) -> Optional[Tuple[Any, Any]]:
             return raw_value, meaning
 
         if "ContentSequence" in item and item.ContentSequence:
-            res = _find_assessment_category(item.ContentSequence)
+            res = _find_assessment_category(item.ContentSequence, keyword)
             if res is not None:
                 return res
     return None
 
 
-def _extract_assessment_category_from_sr(sr_path: str) -> Tuple[Optional[int], Optional[Any], Optional[Any]]:
+def _extract_assessment_category_from_sr(
+    sr_path: str,
+    keyword: str,
+) -> Tuple[Optional[int], Optional[Any], Optional[Any]]:
     try:
         ds = pydicom.dcmread(sr_path, stop_before_pixels=True, force=True)
     except Exception:
@@ -54,7 +59,7 @@ def _extract_assessment_category_from_sr(sr_path: str) -> Tuple[Optional[int], O
     if not root_items:
         return None, None, None
 
-    res = _find_assessment_category(root_items)
+    res = _find_assessment_category(root_items, keyword)
     if res is None:
         return None, None, None
 
@@ -74,10 +79,12 @@ def _extract_assessment_category_from_sr(sr_path: str) -> Tuple[Optional[int], O
     return category_int, raw_value, meaning
 
 
-def parse_sr_to_label(sr_path: str) -> Dict[str, Any]:
-    """Parse a DICOM SR file and return training-ready labels using assessment category."""
+def parse_sr_to_label(sr_path: str, keyword: str = "assessment category") -> Dict[str, Any]:
+    """Parse a DICOM SR file and return training-ready labels using the keyword match."""
 
-    category_int, raw_value, meaning = _extract_assessment_category_from_sr(sr_path)
+    category_int, raw_value, meaning = _extract_assessment_category_from_sr(
+        sr_path, keyword.lower()
+    )
 
     target = category_int if category_int is not None else 0
     diagnosis_text = meaning if meaning is not None else str(raw_value or "")

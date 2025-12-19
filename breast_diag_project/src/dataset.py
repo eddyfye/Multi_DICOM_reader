@@ -473,7 +473,7 @@ class BreastDiagnosisDataModule(pl.LightningDataModule):
         )
         resized_shape = tuple(int(dim) for dim in image_tensor.shape[-3:])
 
-        label = sr_parser.parse_sr_to_label(row["sr_path"])
+        label = sr_parser.parse_sr_to_label(row["sr_path"], keyword=self.config.sr_labels_keyword)
         label_tensor = torch.tensor(float(label.get("target", 0.0)), dtype=torch.float32)
 
         return {

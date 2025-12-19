@@ -9,7 +9,8 @@
     "dicom_filters": {
       "image_modality": "MR",
       "series_description_keyword": "BLISS_AUTO",
-      "sr_modality": "SR"
+      "sr_modality": "SR",
+      "sr_labels_keyword": "assessment category"
     },
     "preprocessing": {
       "clip_percentiles": [1, 99],
@@ -35,7 +36,6 @@
       }
     }
   },
-  "labels": {},
   "model": {
     "name": "resnet3d",
     "in_channels": 1,
