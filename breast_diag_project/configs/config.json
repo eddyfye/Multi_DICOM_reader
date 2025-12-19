@@ -63,5 +63,25 @@
   "output": {
     "project_name": "breast_diag_experiment",
     "checkpoint_monitor": "val_loss"
+  },
+  "tuning": {
+    "n_trials": 10,
+    "study_name": "breast_diag_study",
+    "storage": null,
+    "direction": "minimize",
+    "prune": false,
+    "search_space": {
+      "learning_rate": { "type": "float", "low": 0.0001, "high": 0.005, "log": true },
+      "weight_decay": { "type": "float", "low": 0.000001, "high": 0.01, "log": true },
+      "batch_size": { "type": "categorical", "choices": [1, 2, 4] },
+      "optimizer": { "type": "categorical", "choices": ["adam", "adamw"] },
+      "dropout": { "type": "float", "low": 0.0, "high": 0.5 },
+      "features": {
+        "type": "categorical",
+        "choices": [[16, 32, 64], [32, 64, 128], [32, 64, 128, 256]]
+      },
+      "base_channels": { "type": "categorical", "choices": [32, 64] },
+      "layers": { "type": "categorical", "choices": [[2, 2, 2, 2], [3, 4, 6, 3]] }
+    }
   }
 }
