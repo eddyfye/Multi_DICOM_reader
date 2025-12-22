@@ -10,7 +10,6 @@ import argparse
 import json
 import logging
 import os
-import re
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
@@ -21,98 +20,9 @@ import torch
 from pydicom import dcmread
 from tqdm import tqdm
 
+from breast_diag_project.src.dicom_index import collect_image_metadata, collect_sr_metadata
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-
-
-ImageMeta = Tuple[str, str, str, str]
-
-
-def _collect_image_metadata(
-    images_root: str,
-    *,
-    image_modality: str = "MR",
-    series_description_keyword: str = "BLISS_AUTO",
-) -> Dict[Tuple[str, str], List[ImageMeta]]:
-    """Collect MR BLISS_AUTO DICOM image series using DICOM metadata.
-
-    Returns a mapping keyed by (study_uid, series_uid) to a list of tuples:
-    (patient_id, study_uid, series_uid, file_path).
-    """
-
-    images_map: Dict[Tuple[str, str], List[ImageMeta]] = {}
-    total_files = sum(len(files) for _, _, files in os.walk(images_root))
-
-    with tqdm(total=total_files, desc="Scanning images", unit="file") as progress:
-        for root, _, files in os.walk(images_root):
-            for fname in files:
-                fpath = os.path.join(root, fname)
-                try:
-                    ds = pydicom.dcmread(fpath, stop_before_pixels=True, force=True)
-                except Exception as exc:  # pragma: no cover - logging only
-                    logger.warning("Failed to read DICOM image %s: %s", fpath, exc)
-                    progress.update()
-                    continue
-
-                modality = str(getattr(ds, "Modality", "") or "").upper()
-                if modality != image_modality.upper():
-                    progress.update()
-                    continue
-
-                series_description = str(getattr(ds, "SeriesDescription", "") or "").upper()
-                if series_description_keyword.upper() not in series_description:
-                    progress.update()
-                    continue
-
-                patient_id = getattr(ds, "PatientID", None)
-                study_uid = getattr(ds, "StudyInstanceUID", None)
-                series_uid = getattr(ds, "SeriesInstanceUID", None)
-                if not study_uid or not series_uid:
-                    logger.debug("Skipping file without Study/Series UID: %s", fpath)
-                    progress.update()
-                    continue
-
-                key = (study_uid, series_uid)
-                images_map.setdefault(key, []).append((patient_id, study_uid, series_uid, fpath))
-                progress.update()
-    return images_map
-
-
-def _collect_sr_metadata(
-    sr_root: str, *, sr_modality: str = "SR"
-) -> Dict[Tuple[str, str], List[str]]:
-    """Collect metadata for DICOM-SR files using Modality to identify reports.
-
-    Returns mapping from (patient_id, study_uid) to a list of SR file paths.
-    """
-
-    sr_map: Dict[Tuple[str, str], List[str]] = {}
-    total_files = sum(len(files) for _, _, files in os.walk(sr_root))
-    with tqdm(total=total_files, desc="Scanning SR", unit="file") as progress:
-        for root, _, files in os.walk(sr_root):
-            for fname in files:
-                fpath = os.path.join(root, fname)
-                try:
-                    ds = pydicom.dcmread(fpath, stop_before_pixels=True, force=True)
-                except Exception as exc:  # pragma: no cover - logging only
-                    logger.warning("Failed to read SR file %s: %s", fpath, exc)
-                    progress.update()
-                    continue
-
-                modality = str(getattr(ds, "Modality", "") or "").upper()
-                if modality != sr_modality.upper():
-                    progress.update()
-                    continue
-
-                patient_id = getattr(ds, "PatientID", None) or ""
-                study_uid = getattr(ds, "StudyInstanceUID", None)
-                if not study_uid:
-                    logger.debug("Skipping SR without StudyInstanceUID: %s", fpath)
-                    progress.update()
-                    continue
-                sr_map.setdefault((patient_id, study_uid), []).append(fpath)
-                progress.update()
-    return sr_map
 
 
 def run(
@@ -141,7 +51,7 @@ def run(
         return
 
     logger.info("Scanning image root: %s", images_root)
-    images_map = _collect_image_metadata(
+    images_map = collect_image_metadata(
         images_root,
         image_modality=image_modality,
         series_description_keyword=series_description_keyword,
@@ -149,7 +59,7 @@ def run(
     logger.info("Found %d image series", len(images_map))
 
     logger.info("Scanning SR root: %s", sr_root)
-    sr_map = _collect_sr_metadata(sr_root, sr_modality=sr_modality)
+    sr_map = collect_sr_metadata(sr_root, sr_modality=sr_modality)
     total_sr_files = sum(len(paths) for paths in sr_map.values())
     logger.info("Found %d SR files across %d studies", total_sr_files, len(sr_map))
 

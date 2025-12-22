@@ -18,6 +18,10 @@ describe how the pieces fit together.
 - `src/run_experiment.py`: wraps the training logic with configuration parsing
   and experiment logging.
 - `src/dicom_io.py`: shared routines for loading and transforming DICOM volumes.
+- `src/infer.py`: inference entrypoint that loads a checkpoint, runs predictions,
+  and writes DICOM-SR outputs.
+- `src/sr_writer.py`: mapping utilities for converting logits into BI-RADS labels
+  and emitting DICOM-SR files.
 
 ## Typical workflow
 
@@ -69,6 +73,60 @@ python -m breast_diag_project.src.run_experiment \
 
 The runner saves checkpoints, metrics, and logs to the specified `outputdir` so
 you can track experiment results across runs.
+
+## Inference workflow
+
+The inference entrypoint mirrors the offline preprocessing used in training,
+loads model weights from a Lightning checkpoint, and emits a DICOM SR file per
+study/series with the predicted BI-RADS assessment.
+
+```bash
+python -m breast_diag_project.src.infer \
+  --config breast_diag_project/configs/config.json \
+  --input-dir /path/to/dicom/images \
+  --output-dir /tmp/breast_inference_outputs \
+  --checkpoint /tmp/breast_runs/exp1/checkpoints/epoch=9-step=100.ckpt
+```
+
+Optional filters `--image-modality` and `--series-description` override the
+defaults from `data.dicom_filters` (pass an empty string to disable a filter).
+
+### Output layout
+
+```
+/tmp/breast_inference_outputs/
+  <patient_id>/
+    <study_uid>/
+      <study_uid>_<series_uid>_prediction.dcm
+```
+
+### Label mapping
+
+Inference maps model outputs into the same BI-RADS label schema returned by
+`sr_parser.parse_sr_to_label`. Configure the mapping in the config JSON under
+`inference.label_mapping`, for example:
+
+```json
+{
+  "inference": {
+    "label_mapping": {
+      "binary_threshold": 0.5,
+      "positive_label": 4,
+      "negative_label": 1,
+      "label_texts": {
+        "1": "BI-RADS 1 (Negative)",
+        "4": "BI-RADS 4 (Suspicious)"
+      },
+      "class_to_label": [1, 2, 3, 4, 5]
+    }
+  }
+}
+```
+
+For binary models, `binary_threshold`, `positive_label`, and `negative_label`
+control the mapping. For multi-class models, `class_to_label` maps the predicted
+class index to a BI-RADS label. `label_texts` overrides the text stored in the
+DICOM SR content sequence.
 
 ## Hyperparameter tuning
 
